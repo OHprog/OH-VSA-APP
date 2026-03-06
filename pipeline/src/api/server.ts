@@ -4,11 +4,30 @@ import dotenv from 'dotenv';
 import { runModule } from '../evaluators/moduleEvaluator';
 import { getSupabase } from '../utils/clients';
 import { log } from '../utils/helpers';
+import { scrapeNewsForSupplier } from '../scrapers/firecrawl-scraper';
+import {
+  startScrapeRun,
+  completeScrapeRun,
+  saveArticlesForEvaluation,
+  trackFirecrawlUsage,
+} from '../utils/supabase-storage';
+import type { ScrapedArticle } from '../types';
 
 dotenv.config();
 
 const app = express();
-app.use(cors());
+
+// Allow origins from CORS_ORIGIN env var (comma-separated) or all in dev
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+  : undefined;
+
+app.use(
+  cors({
+    origin: allowedOrigins ?? true,
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // ============================================================
@@ -71,10 +90,26 @@ async function runEvaluationPipeline(
 
     log('info', 'Pipeline', `Set evaluation ${evaluationId} → running`);
 
-    // Run all requested modules in parallel
+    // Pre-scrape news ONCE — shared across sanctions, market, ESG, cyber modules
+    const scrapeStart = Date.now();
+    const runId = await startScrapeRun(evaluationId, ico, companyName);
+    let prefetchedArticles: ScrapedArticle[] = [];
+
+    try {
+      prefetchedArticles = await scrapeNewsForSupplier(companyName, ico);
+      await completeScrapeRun(runId!, prefetchedArticles, Date.now() - scrapeStart, []);
+      await saveArticlesForEvaluation(runId!, evaluationId, ico, prefetchedArticles);
+      await trackFirecrawlUsage(prefetchedArticles.length);
+      log('info', 'Pipeline', `Pre-scraped ${prefetchedArticles.length} articles for ${companyName}`);
+    } catch (err: any) {
+      log('warn', 'Pipeline', `Pre-scrape failed for ${companyName}: ${err.message}`);
+      await completeScrapeRun(runId!, [], Date.now() - scrapeStart, [err.message]);
+    }
+
+    // Run all requested modules in parallel, passing pre-fetched articles
     const results = await Promise.allSettled(
       modules.map((moduleType) =>
-        runModule(evaluationId, moduleType, ico, companyName)
+        runModule(evaluationId, moduleType, ico, companyName, prefetchedArticles)
       )
     );
 
