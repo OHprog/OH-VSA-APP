@@ -27,7 +27,8 @@ export async function runModule(
   evaluationId: string,
   moduleType: string,
   ico: string,
-  companyName: string
+  companyName: string,
+  prefetchedArticles: ScrapedArticle[] = []
 ): Promise<void> {
   const supabase = getSupabase();
 
@@ -51,16 +52,16 @@ export async function runModule(
         result = await evaluateCompliance(ico, companyName);
         break;
       case 'sanctions':
-        result = await evaluateSanctions(ico, companyName);
+        result = await evaluateSanctions(ico, companyName, prefetchedArticles);
         break;
       case 'market':
-        result = await evaluateMarket(ico, companyName);
+        result = await evaluateMarket(ico, companyName, prefetchedArticles);
         break;
       case 'esg':
-        result = await evaluateESG(ico, companyName);
+        result = await evaluateESG(ico, companyName, prefetchedArticles);
         break;
       case 'cyber':
-        result = await evaluateCyber(ico, companyName);
+        result = await evaluateCyber(ico, companyName, prefetchedArticles);
         break;
       case 'internal':
         result = evaluateInternal();
@@ -252,10 +253,10 @@ async function evaluateCompliance(ico: string, companyName: string): Promise<Mod
 // Data sources: Insolvency + sanctions-tagged news
 // ============================================================
 
-async function evaluateSanctions(ico: string, companyName: string): Promise<ModuleResult> {
+async function evaluateSanctions(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
   const [insolvency, newsArticles] = await Promise.all([
     checkInsolvency(ico),
-    scrapeNewsForSupplier(companyName, ico),
+    prefetchedArticles.length > 0 ? Promise.resolve(prefetchedArticles) : scrapeNewsForSupplier(companyName, ico),
   ]);
 
   const sanctionNews = newsArticles.filter((a) => a.tags.includes('sanctions'));
@@ -303,8 +304,10 @@ async function evaluateSanctions(ico: string, companyName: string): Promise<Modu
 // Data source: Czech news (Seznam, HN, E15, Forbes)
 // ============================================================
 
-async function evaluateMarket(ico: string, companyName: string): Promise<ModuleResult> {
-  const articles = await scrapeNewsForSupplier(companyName, ico);
+async function evaluateMarket(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
+  const articles = prefetchedArticles.length > 0
+    ? prefetchedArticles
+    : await scrapeNewsForSupplier(companyName, ico);
 
   let score = 70;
   const findings: string[] = [];
@@ -373,10 +376,10 @@ async function evaluateMarket(ico: string, companyName: string): Promise<ModuleR
 // Data source: Energy licences (ERÚ) + ESG-tagged news
 // ============================================================
 
-async function evaluateESG(ico: string, companyName: string): Promise<ModuleResult> {
+async function evaluateESG(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
   const [licenses, articles] = await Promise.all([
     checkEnergyLicenses(ico),
-    scrapeNewsForSupplier(companyName, ico),
+    prefetchedArticles.length > 0 ? Promise.resolve(prefetchedArticles) : scrapeNewsForSupplier(companyName, ico),
   ]);
 
   const esgNews = articles.filter((a) => a.tags.includes('esg') || a.tags.includes('energy'));
@@ -444,8 +447,10 @@ async function evaluateESG(ico: string, companyName: string): Promise<ModuleResu
 // Data source: News with 'cyber' or 'gdpr' tags
 // ============================================================
 
-async function evaluateCyber(ico: string, companyName: string): Promise<ModuleResult> {
-  const articles = await scrapeNewsForSupplier(companyName, ico);
+async function evaluateCyber(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
+  const articles = prefetchedArticles.length > 0
+    ? prefetchedArticles
+    : await scrapeNewsForSupplier(companyName, ico);
   const cyberArticles = articles.filter((a) => a.tags.includes('cyber') || a.tags.includes('gdpr'));
 
   let score = 80;
