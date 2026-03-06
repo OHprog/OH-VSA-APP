@@ -25,3 +25,7 @@ jobs:
           app_location: frontend
           output_location: dist
           # No api_location — Supabase Edge Functions handle the backend
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_PIPELINE_URL: https://vsa-pipeline.azurewebsites.net
