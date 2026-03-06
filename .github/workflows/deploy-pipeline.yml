@@ -40,9 +40,15 @@ jobs:
           npm ci --omit=dev
           zip -r ../deploy.zip .
 
-      - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+      - name: Login to Azure
+        uses: azure/login@v2
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: pipeline/deploy.zip
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure App Service
+        run: |
+          az webapp deploy \
+            --name ${{ secrets.AZURE_WEBAPP_NAME }} \
+            --resource-group rg-oh-vsa-app \
+            --src-path pipeline/deploy.zip \
+            --type zip
