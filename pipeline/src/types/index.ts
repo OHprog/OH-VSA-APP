@@ -101,6 +101,8 @@ export interface ScraperConfig {
     endpoints: string[];
     headers?: Record<string, string>;
   };
+  // Content language (ISO 639-1 code, e.g. 'cs', 'en')
+  language?: string;
   // Scheduling
   schedule: 'hourly' | 'daily' | 'weekly';
   enabled: boolean;

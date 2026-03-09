@@ -30,6 +30,7 @@ const countries = [
   { code: "DE", name: "Germany" },
   { code: "AT", name: "Austria" },
   { code: "PL", name: "Poland" },
+  { code: "INT", name: "International / Other" },
 ];
 
 const steps = ["Select Supplier", "Choose Modules", "Review & Launch"];
@@ -271,13 +272,15 @@ export default function NewEvaluation() {
               <Input value={quickForm.company_name} onChange={(e) => setQuickForm({ ...quickForm, company_name: e.target.value })} placeholder="Acme Corp" required />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>IČO</Label>
-                <Input value={quickForm.ico} onChange={(e) => setQuickForm({ ...quickForm, ico: e.target.value })} placeholder="12345678" maxLength={8} />
-              </div>
-              <div className="space-y-2">
+              {quickForm.country === "CZ" && (
+                <div className="space-y-2">
+                  <Label>IČO</Label>
+                  <Input value={quickForm.ico} onChange={(e) => setQuickForm({ ...quickForm, ico: e.target.value })} placeholder="12345678" maxLength={8} />
+                </div>
+              )}
+              <div className={`space-y-2 ${quickForm.country !== "CZ" ? "col-span-2" : ""}`}>
                 <Label>Country</Label>
-                <Select value={quickForm.country} onValueChange={(v) => setQuickForm({ ...quickForm, country: v })}>
+                <Select value={quickForm.country} onValueChange={(v) => setQuickForm({ ...quickForm, country: v, ico: v !== "CZ" ? "" : quickForm.ico })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {countries.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}

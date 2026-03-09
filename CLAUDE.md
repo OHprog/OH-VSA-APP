@@ -5,6 +5,22 @@ Supplier risk evaluation platform for CETIN a.s. Analysts search for Czech suppl
 
 ---
 
+## Deployment
+
+| Component | URL | Hosting |
+|-----------|-----|---------|
+| Frontend | `https://agreeable-pebble-0e9fcc610.6.azurestaticapps.net` | Azure Static Web Apps |
+| Pipeline API | `https://vsa-pipeline.azurewebsites.net` | Azure App Service |
+| Database | `https://mhmflwuztabcqchmxjnp.supabase.co` | Supabase |
+
+**GitHub Actions** handles all deployments on push to `main`:
+- `pipeline/**` changes → `.github/workflows/deploy-pipeline.yml` → Azure App Service
+- `frontend/**` changes → `.github/workflows/deploy-frontend.yml` → Azure Static Web Apps
+
+The corporate proxy (`http://internet.cetin:8080`) is only used for **local development** in `pipeline/.env`. It is NOT set on Azure App Service.
+
+---
+
 ## Architecture
 
 ```
@@ -14,12 +30,34 @@ OH-VSA-APP/
 │   ├── src/hooks/     # useAuth.tsx (Supabase auth + role), use-toast
 │   ├── src/integrations/supabase/  # client.ts, types.ts
 │   └── supabase/migrations/        # All DB migrations (apply in order)
-└── pipeline/          # Node.js + TypeScript
+└── pipeline/          # Node.js + TypeScript — deployed to Azure App Service
+    ├── src/api/server.ts            # Express API (POST /evaluate, GET /health)
     ├── src/config/sources.ts        # FireCrawl scraper configs + ARES/Insolvency
     ├── src/scrapers/firecrawl-scraper.ts
-    ├── src/api/server.ts            # Express API on port 3001
-    └── .env                         # All secrets (Supabase, FireCrawl, MongoDB, AIML)
+    ├── src/evaluators/moduleEvaluator.ts
+    └── .env                         # Local dev secrets only (NOT used on Azure)
 ```
+
+---
+
+## Evaluation Trigger Flow
+
+```
+User clicks "Launch" in frontend (Azure Static Web App)
+  → supabase.rpc("create_evaluation") creates evaluation + modules (status: queued)
+  → DB trigger on_evaluation_insert fires net.http_post
+  → run-evaluation Edge Function (Supabase) fetches supplier + module list
+  → POST https://vsa-pipeline.azurewebsites.net/evaluate
+  → Pipeline sets evaluation → running, runs pre-scrape (90s timeout), runs all modules in parallel
+  → Modules update status: queued → running → completed/failed
+```
+
+**Key files:**
+- `frontend/supabase/functions/run-evaluation/index.ts` — Edge Function (deployed, verify_jwt: false)
+- `pipeline/src/api/server.ts` — `/evaluate` endpoint + `runEvaluationPipeline()`
+- Migration `20260309000001` — DB trigger `on_evaluation_insert` calling the Edge Function
+
+**Edge Function secret:** `PIPELINE_API_URL=https://vsa-pipeline.azurewebsites.net`
 
 ---
 
@@ -29,11 +67,24 @@ OH-VSA-APP/
 - **Anon key**: in `frontend/.env.local` as `VITE_SUPABASE_PUBLISHABLE_KEY` and `pipeline/.env` as `SUPABASE_ANON_KEY`
 - **Service key**: in `pipeline/.env` as `SUPABASE_SERVICE_KEY` (bypasses RLS — use for debugging)
 
-### Useful curl pattern for debugging Supabase:
+### Useful curl pattern for debugging Supabase (use corporate proxy):
 ```bash
-curl -s "https://mhmflwuztabcqchmxjnp.supabase.co/rest/v1/<table>?select=*" \
+curl -s -x http://internet.cetin:8080 "https://mhmflwuztabcqchmxjnp.supabase.co/rest/v1/<table>?select=*" \
   -H "apikey: $SUPABASE_SERVICE_KEY" \
   -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" | python -m json.tool
+```
+
+### Management API (for secrets, functions, SQL):
+```bash
+curl -s -x http://internet.cetin:8080 "https://api.supabase.com/v1/projects/mhmflwuztabcqchmxjnp/..." \
+  -H "Authorization: Bearer sbp_c0431d16f9c1df87b64ee74b479f55041e1db457"
+
+# Run SQL directly:
+curl -s -x http://internet.cetin:8080 -X POST \
+  "https://api.supabase.com/v1/projects/mhmflwuztabcqchmxjnp/database/query" \
+  -H "Authorization: Bearer sbp_c0431d16f9c1df87b64ee74b479f55041e1db457" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SELECT ..."}'
 ```
 
 ---
@@ -42,26 +93,29 @@ curl -s "https://mhmflwuztabcqchmxjnp.supabase.co/rest/v1/<table>?select=*" \
 
 | Object | Type | Notes |
 |--------|------|-------|
-| `suppliers` | table | Czech companies, keyed by IČO |
-| `evaluations` | table | Risk assessments; `overall_risk_level` is an enum stored **lowercase** (`low`, `medium`, `high`, `critical`) |
-| `evaluation_modules` | table | Per-module results (financial, compliance, etc.) |
+| `suppliers` | table | Czech companies, keyed by IČO (nullable for foreign companies) |
+| `evaluations` | table | Risk assessments; `overall_risk_level` is an enum stored **lowercase** |
+| `evaluation_modules` | table | Per-module results; status: queued → running → completed/failed |
 | `data_sources` | table | 20 active sources (news, registries, sanctions) |
 | `user_roles` | table | `admin`, `analyst`, `viewer` — app-level roles |
 | `profiles` | table | User display names, `is_active` flag |
 | `dashboard_stats` | view | Aggregate stats — uses `security_invoker = off` + `overall_risk_level::text` cast |
 | `evaluation_list` | view | Joined eval+supplier view — uses `security_invoker = off` |
 | `get_monthly_evaluation_stats` | function | `SECURITY DEFINER`, groups evals by month |
+| `firecrawl_scrape_runs` | table | One row per evaluation scrape session; has `source_summaries JSONB` |
+| `firecrawl_articles` | table | Per-article rows with 500-char snippet (full content in MongoDB) |
 
 ### Critical conventions:
-- `overall_risk_level` is a **PostgreSQL enum**, cast with `::text` for comparisons (e.g. `overall_risk_level::text = 'medium'`)
+- `overall_risk_level` is a **PostgreSQL enum**, cast with `::text` for comparisons
 - `LOWER()` does **not** work on this enum — use `::text` cast instead
 - All views must use `security_invoker = off` (not `on`) to bypass RLS correctly
 - Functions that query RLS-protected tables need `SECURITY DEFINER`
+- IČO is **nullable** — foreign companies have no Czech IČO; pipeline handles empty IČO gracefully
 
 ---
 
 ## RLS Notes
-- `data_sources`: requires policy `"Authenticated can view data sources" FOR SELECT TO authenticated USING (true)` — was missing from live DB, fixed in migration `20260304000001`
+- `data_sources`: requires SELECT policy for authenticated users (migration `20260304000001`)
 - `dashboard_stats` / `evaluation_list`: were broken with `security_invoker = on` — fixed in `20260304000002`
 - When a Supabase query returns `data: [], error: null` silently → almost always an RLS policy issue
 
@@ -80,20 +134,21 @@ curl -s "https://mhmflwuztabcqchmxjnp.supabase.co/rest/v1/<table>?select=*" \
 20260304000000  — patch_missing_functions (has_role, user_roles, search_suppliers, create_evaluation)
 20260304000001  — fix data_sources SELECT RLS policy
 20260304000002  — fix dashboard_stats/evaluation_list views + monthly RPC (security_invoker, risk level casing)
+20260304000003  — firecrawl_scrape_runs + firecrawl_articles tables
+20260304000004  — source_summaries JSONB column on firecrawl_scrape_runs
+20260309000001  — on_evaluation_insert DB trigger → run-evaluation Edge Function
 ```
 
 ---
 
-## Frontend Key Files
-- [Admin.tsx](frontend/src/pages/Admin.tsx) — Users / Data Sources / System tabs; fetches on mount + tab switch
-- [Dashboard.tsx](frontend/src/pages/Dashboard.tsx) — Stats cards, charts, recent evaluations
-- [useAuth.tsx](frontend/src/hooks/useAuth.tsx) — Auth context; `isAdmin` = role from `user_roles` table
-
 ## Pipeline Key Files
+- [server.ts](pipeline/src/api/server.ts) — `/evaluate` endpoint; 90s pre-scrape timeout; modules always run even if scrape fails
+- [moduleEvaluator.ts](pipeline/src/evaluators/moduleEvaluator.ts) — 7 modules; use only prefetchedArticles (no per-module fallback scrape)
 - [sources.ts](pipeline/src/config/sources.ts) — All scraper configs (ARES, Insolvency, news, industry, energy)
-- [.env](pipeline/.env) — Supabase keys, FireCrawl, MongoDB, AIML API, corporate proxy
+- [.env](pipeline/.env) — Local dev secrets; corporate proxy set here for local use only
 
----
-
-## Corporate Proxy
-All outbound HTTP from the pipeline goes through `http://internet.cetin:8080` (set in `pipeline/.env`).
+## Frontend Key Files
+- [Admin.tsx](frontend/src/pages/Admin.tsx) — Users / Data Sources / System tabs
+- [Dashboard.tsx](frontend/src/pages/Dashboard.tsx) — Stats cards, charts, recent evaluations
+- [NewEvaluation.tsx](frontend/src/pages/NewEvaluation.tsx) — Calls `create_evaluation` RPC; also fire-and-forget to `VITE_PIPELINE_URL` (redundant in prod, used for local dev only)
+- [useAuth.tsx](frontend/src/hooks/useAuth.tsx) — Auth context; `isAdmin` = role from `user_roles` table

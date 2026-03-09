@@ -251,7 +251,7 @@ export async function scrapeNewsForSupplier(
             content,
             published_at: scrapeResult.metadata?.publishedTime || null,
             scraped_at: new Date().toISOString(),
-            language: 'cs',
+            language: source.language ?? 'cs',
             metadata: scrapeResult.metadata || {},
             supplier_mentions: [companyName],
             tags: extractTags(content, source.source_type),

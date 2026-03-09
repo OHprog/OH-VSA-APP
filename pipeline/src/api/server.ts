@@ -5,6 +5,7 @@ import { runModule } from '../evaluators/moduleEvaluator';
 import { getSupabase } from '../utils/clients';
 import { log } from '../utils/helpers';
 import { scrapeNewsForSupplier } from '../scrapers/firecrawl-scraper';
+import { INTERNATIONAL_NEWS_SOURCES } from '../config/sources';
 import {
   startScrapeRun,
   completeScrapeRun,
@@ -54,9 +55,9 @@ app.post('/evaluate', async (req, res) => {
     modules: string[];
   };
 
-  if (!evaluation_id || !ico || !Array.isArray(modules) || modules.length === 0) {
+  if (!evaluation_id || !company_name || !Array.isArray(modules) || modules.length === 0) {
     return res.status(400).json({
-      error: 'evaluation_id, ico, and a non-empty modules array are required',
+      error: 'evaluation_id, company_name, and a non-empty modules array are required',
     });
   }
 
@@ -98,7 +99,16 @@ async function runEvaluationPipeline(
     let prefetchedArticles: ScrapedArticle[] = [];
 
     try {
-      prefetchedArticles = await scrapeNewsForSupplier(companyName, ico);
+      // Use international news sources when no Czech IČO is present
+      const newsSources = ico ? undefined : INTERNATIONAL_NEWS_SOURCES;
+      prefetchedArticles = await withTimeout(
+        scrapeNewsForSupplier(companyName, ico, newsSources),
+        90_000,
+        []
+      );
+      if (prefetchedArticles.length === 0) {
+        log('warn', 'Pipeline', `Pre-scrape timed out or returned nothing for ${companyName} — proceeding with empty articles`);
+      }
       await completeScrapeRun(runId!, prefetchedArticles, Date.now() - scrapeStart, []);
       await saveArticlesForEvaluation(runId, evaluationId, ico, prefetchedArticles);
       await trackFirecrawlUsage(prefetchedArticles.length);
@@ -106,7 +116,7 @@ async function runEvaluationPipeline(
 
       // Generate per-source AI summaries and store on the scrape run record
       if (runId && prefetchedArticles.length > 0) {
-        const summaries = await generateSourceSummaries(prefetchedArticles);
+        const summaries = await withTimeout(generateSourceSummaries(prefetchedArticles), 60_000, {});
         await updateScrapeRunSummaries(runId, summaries);
       }
     } catch (err: any) {
@@ -159,6 +169,13 @@ async function runEvaluationPipeline(
       .update({ status: 'failed' })
       .eq('id', evaluationId);
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
 }
 
 function scoreToRiskLevel(score: number | null): string {

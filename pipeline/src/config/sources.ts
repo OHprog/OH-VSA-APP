@@ -166,6 +166,68 @@ export const ENERGY_SOURCES: ScraperConfig[] = [
 ];
 
 // ============================================================
+// International News Sources (for non-Czech companies)
+// ============================================================
+
+export const INTERNATIONAL_NEWS_SOURCES: ScraperConfig[] = [
+  {
+    name: 'Reuters',
+    source_type: 'news',
+    base_url: 'https://www.reuters.com',
+    scrape_method: 'firecrawl_crawl',
+    language: 'en',
+    crawl_options: {
+      max_pages: 15,
+      include_paths: ['/business/*', '/world/*', '/markets/*', '/technology/*'],
+      exclude_paths: ['/author/*', '/video/*', '/graphics/*'],
+    },
+    schedule: 'daily',
+    enabled: true,
+  },
+  {
+    name: 'BBC Business',
+    source_type: 'news',
+    base_url: 'https://www.bbc.com/news/business',
+    scrape_method: 'firecrawl_crawl',
+    language: 'en',
+    crawl_options: {
+      max_pages: 15,
+      include_paths: ['/news/business/*', '/news/technology/*'],
+      exclude_paths: ['/news/live/*'],
+    },
+    schedule: 'daily',
+    enabled: true,
+  },
+  {
+    name: 'The Guardian Business',
+    source_type: 'news',
+    base_url: 'https://www.theguardian.com',
+    scrape_method: 'firecrawl_crawl',
+    language: 'en',
+    crawl_options: {
+      max_pages: 15,
+      include_paths: ['/business/*', '/world/*', '/technology/*', '/environment/*'],
+      exclude_paths: ['/commentisfree/*', '/culture/*'],
+    },
+    schedule: 'daily',
+    enabled: true,
+  },
+  {
+    name: 'AP News Business',
+    source_type: 'news',
+    base_url: 'https://apnews.com',
+    scrape_method: 'firecrawl_crawl',
+    language: 'en',
+    crawl_options: {
+      max_pages: 15,
+      include_paths: ['/business/*', '/financial-markets/*', '/technology/*', '/world-news/*'],
+    },
+    schedule: 'daily',
+    enabled: true,
+  },
+];
+
+// ============================================================
 // All sources combined
 // ============================================================
 

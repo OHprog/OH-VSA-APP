@@ -107,6 +107,24 @@ export async function runModule(
 // ============================================================
 
 async function evaluateFinancial(ico: string, companyName: string): Promise<ModuleResult> {
+  // Non-Czech companies have no IČO — skip ARES, return neutral assessment
+  if (!ico) {
+    return {
+      score: 60,
+      risk_level: 'medium',
+      summary: `Financial Health for ${companyName}: score 60/100 (medium risk). No Czech IČO — ARES registry not applicable for international companies.`,
+      findings: [
+        `${companyName} is not registered in the Czech Republic — Czech ARES registry does not apply.`,
+        'For international companies, financial health assessment should be supplemented with data from OpenCorporates, Dun & Bradstreet, or local business registries.',
+        'Manual review of publicly available financial statements is recommended.',
+      ],
+      sources: [
+        { url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' },
+      ],
+      raw_data: { international: true },
+    };
+  }
+
   const ares = await lookupCompanyByICO(ico);
 
   if (!ares) {
@@ -191,6 +209,25 @@ async function evaluateFinancial(ico: string, companyName: string): Promise<Modu
 // ============================================================
 
 async function evaluateCompliance(ico: string, companyName: string): Promise<ModuleResult> {
+  // Non-Czech companies — skip ARES and ISIR entirely
+  if (!ico) {
+    return {
+      score: 65,
+      risk_level: 'medium',
+      summary: `Compliance & Legal for ${companyName}: score 65/100 (medium risk). Czech registries (ARES, ISIR) not applicable — international company.`,
+      findings: [
+        `${companyName} has no Czech IČO — ARES (Czech Business Register) and ISIR (Czech Insolvency Register) do not apply.`,
+        'For international compliance verification, consult the relevant national business registry of the country of incorporation.',
+        'Recommended checks: local insolvency registers, sanctions lists (EU, OFAC, UN), court records in the country of origin.',
+      ],
+      sources: [
+        { url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' },
+        { url: 'https://www.sanctionsmap.eu/', title: 'EU Sanctions Map' },
+      ],
+      raw_data: { international: true },
+    };
+  }
+
   const [ares, insolvency] = await Promise.all([
     lookupCompanyByICO(ico),
     checkInsolvency(ico),
@@ -254,31 +291,34 @@ async function evaluateCompliance(ico: string, companyName: string): Promise<Mod
 // ============================================================
 
 async function evaluateSanctions(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
-  const [insolvency, newsArticles] = await Promise.all([
-    checkInsolvency(ico),
-    prefetchedArticles.length > 0 ? Promise.resolve(prefetchedArticles) : scrapeNewsForSupplier(companyName, ico),
-  ]);
-
-  const sanctionNews = newsArticles.filter((a) => a.tags.includes('sanctions'));
+  const sanctionNews = prefetchedArticles.filter((a) => a.tags.includes('sanctions'));
 
   let score = 90;
   const findings: string[] = [];
-  const sources: { url: string; title: string }[] = [
-    { url: `https://isir.justice.cz/isir/ueu/vysledek_lustrace.do?ic=${ico}&typ=ic`, title: 'ISIR – Insolvency Register' },
-  ];
+  const sources: { url: string; title: string }[] = [];
 
-  // Active insolvency → sanctions risk proxy
-  const activeInsolvency = insolvency.filter((r) => r.status === 'active');
-  if (activeInsolvency.length > 0) {
-    score -= activeInsolvency.length * 30;
-    findings.push(`⚠️ ${activeInsolvency.length} active insolvency case(s) detected — potential financial sanctions risk.`);
+  // For Czech companies only: check ISIR as a sanctions risk proxy
+  if (ico) {
+    const insolvency = await checkInsolvency(ico);
+    sources.push({ url: `https://isir.justice.cz/isir/ueu/vysledek_lustrace.do?ic=${ico}&typ=ic`, title: 'ISIR – Czech Insolvency Register' });
+
+    const activeInsolvency = insolvency.filter((r) => r.status === 'active');
+    if (activeInsolvency.length > 0) {
+      score -= activeInsolvency.length * 30;
+      findings.push(`⚠️ ${activeInsolvency.length} active insolvency case(s) detected — potential financial sanctions risk.`);
+    } else {
+      findings.push('No active insolvency proceedings detected in Czech ISIR.');
+    }
   } else {
-    findings.push('No active insolvency proceedings detected.');
+    findings.push('Czech Insolvency Register (ISIR) not applicable — international company. Sanctions screening based on news sources only.');
+    findings.push('Recommended: verify against EU sanctions list, OFAC SDN list, and UN consolidated sanctions list.');
+    sources.push({ url: 'https://www.sanctionsmap.eu/', title: 'EU Sanctions Map' });
+    sources.push({ url: 'https://sanctionssearch.ofac.treas.gov/', title: 'OFAC Sanctions Search' });
   }
 
-  // Sanctions-related news
+  // Sanctions-related news (applies to all companies)
   if (sanctionNews.length === 0) {
-    findings.push('No sanctions-related news found across Czech news sources.');
+    findings.push('No sanctions-related news found in monitored news sources.');
   } else {
     score -= sanctionNews.length * 20;
     findings.push(`🔴 ${sanctionNews.length} sanctions-related news article(s) found.`);
@@ -292,10 +332,10 @@ async function evaluateSanctions(ico: string, companyName: string, prefetchedArt
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Sanction Risks', score, companyName, sanctionNews.length === 0 && activeInsolvency.length === 0 ? 'clean' : 'issues found'),
+    summary: buildSummary('Sanction Risks', score, companyName, sanctionNews.length === 0 ? 'clean' : 'issues found'),
     findings,
     sources,
-    raw_data: { insolvency, sanctionNews: sanctionNews.map((a) => ({ title: a.title, url: a.source_url, tags: a.tags })) },
+    raw_data: { sanctionNews: sanctionNews.map((a) => ({ title: a.title, url: a.source_url, tags: a.tags })) },
   };
 }
 
@@ -305,9 +345,7 @@ async function evaluateSanctions(ico: string, companyName: string, prefetchedArt
 // ============================================================
 
 async function evaluateMarket(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
-  const articles = prefetchedArticles.length > 0
-    ? prefetchedArticles
-    : await scrapeNewsForSupplier(companyName, ico);
+  const articles = prefetchedArticles;
 
   let score = 70;
   const findings: string[] = [];
@@ -377,29 +415,30 @@ async function evaluateMarket(ico: string, companyName: string, prefetchedArticl
 // ============================================================
 
 async function evaluateESG(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
-  const [licenses, articles] = await Promise.all([
-    checkEnergyLicenses(ico),
-    prefetchedArticles.length > 0 ? Promise.resolve(prefetchedArticles) : scrapeNewsForSupplier(companyName, ico),
-  ]);
-
-  const esgNews = articles.filter((a) => a.tags.includes('esg') || a.tags.includes('energy'));
+  const esgNews = prefetchedArticles.filter((a) => a.tags.includes('esg') || a.tags.includes('energy'));
 
   let score = 70;
   const findings: string[] = [];
-  const sources: { url: string; title: string }[] = [
-    { url: `https://www.eru.cz/licence?ico=${ico}`, title: 'ERÚ – Energy Regulatory Office Licences' },
-  ];
+  const sources: { url: string; title: string }[] = [];
 
-  // Energy licences
-  if (licenses.length > 0) {
-    const active = licenses.filter((l) => l.status === 'active');
-    score += Math.min(active.length * 5, 15);
-    findings.push(`${licenses.length} energy licence(s) found (${active.length} active).`);
-    for (const lic of licenses.slice(0, 3)) {
-      findings.push(`  • ${lic.license_type} — ${lic.source.toUpperCase()} licence ${lic.license_number}`);
+  // Czech ERÚ energy licence check — only applicable with IČO
+  if (ico) {
+    const licenses = await checkEnergyLicenses(ico);
+    sources.push({ url: `https://www.eru.cz/licence?ico=${ico}`, title: 'ERÚ – Czech Energy Regulatory Office Licences' });
+
+    if (licenses.length > 0) {
+      const active = licenses.filter((l) => l.status === 'active');
+      score += Math.min(active.length * 5, 15);
+      findings.push(`${licenses.length} energy licence(s) found in Czech ERÚ (${active.length} active).`);
+      for (const lic of licenses.slice(0, 3)) {
+        findings.push(`  • ${lic.license_type} — ${lic.source.toUpperCase()} licence ${lic.license_number}`);
+      }
+    } else {
+      findings.push('No energy licences found in Czech ERÚ — company is likely not in the Czech regulated energy sector.');
     }
   } else {
-    findings.push('No energy licences found in ERÚ — company is likely not in the regulated energy sector.');
+    findings.push('Czech ERÚ energy licence registry not applicable — international company.');
+    findings.push('ESG assessment based on publicly available news sources. Manual review of sustainability reports recommended.');
   }
 
   // ESG news
@@ -435,10 +474,10 @@ async function evaluateESG(ico: string, companyName: string, prefetchedArticles:
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Environmental & ESG', score, companyName, `${licenses.length} energy licences, ${esgNews.length} ESG articles`),
+    summary: buildSummary('Environmental & ESG', score, companyName, `${esgNews.length} ESG articles`),
     findings,
     sources,
-    raw_data: { licenses, esgNews: esgNews.map((a) => ({ title: a.title, url: a.source_url })) },
+    raw_data: { esgNews: esgNews.map((a) => ({ title: a.title, url: a.source_url })) },
   };
 }
 
@@ -448,9 +487,7 @@ async function evaluateESG(ico: string, companyName: string, prefetchedArticles:
 // ============================================================
 
 async function evaluateCyber(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
-  const articles = prefetchedArticles.length > 0
-    ? prefetchedArticles
-    : await scrapeNewsForSupplier(companyName, ico);
+  const articles = prefetchedArticles;
   const cyberArticles = articles.filter((a) => a.tags.includes('cyber') || a.tags.includes('gdpr'));
 
   let score = 80;
