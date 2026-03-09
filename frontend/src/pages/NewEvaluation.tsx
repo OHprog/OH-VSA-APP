@@ -48,7 +48,7 @@ export default function NewEvaluation() {
   const [quickAdding, setQuickAdding] = useState(false);
 
   const navigate = useNavigate();
-  const { isAdmin, isAnalyst, user } = useAuth();
+  const { isAdmin, isAnalyst, user, profile } = useAuth();
   const { toast } = useToast();
 
   // Permission check
@@ -67,7 +67,7 @@ export default function NewEvaluation() {
     }
     setSearching(true);
     try {
-      const { data, error } = await supabase.rpc("search_suppliers", { p_query: query.trim(), p_limit: 10 });
+      const { data, error } = await supabase.rpc("search_suppliers", { search_term: query.trim(), p_limit: 10 });
       if (error) throw error;
       setSearchResults((data as SupplierResult[]) ?? []);
     } catch (err: any) {
@@ -100,6 +100,20 @@ export default function NewEvaluation() {
         p_module_types: selectedModules,
       });
       if (error) throw error;
+
+      // Fire-and-forget: tell pipeline to start processing (don't await)
+      const pipelineUrl = import.meta.env.VITE_PIPELINE_URL ?? "http://localhost:3001";
+      fetch(`${pipelineUrl}/evaluate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          evaluation_id: data,
+          ico: selectedSupplier.ico ?? "",
+          company_name: selectedSupplier.company_name,
+          modules: selectedModules,
+        }),
+      }).catch((e) => console.warn("[pipeline] call failed:", e));
+
       toast({ title: "Evaluation started!", description: `Evaluation for ${selectedSupplier.company_name} has been launched.` });
       navigate(`/evaluations/${data}`);
     } catch (err: any) {
@@ -111,16 +125,21 @@ export default function NewEvaluation() {
 
   const handleQuickAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user?.id || !profile?.organization_id) {
+      toast({ title: "Not authenticated", description: "Please log in to add a supplier.", variant: "destructive" });
+      return;
+    }
     setQuickAdding(true);
     try {
       const { data, error } = await supabase
         .from("suppliers")
         .insert({
+          organization_id: profile.organization_id,
           company_name: quickForm.company_name,
           ico: quickForm.ico || null,
           country: quickForm.country || null,
           sector: quickForm.sector || null,
-          created_by: user?.id,
+          created_by: user.id,
         })
         .select("id, company_name, ico, sector, country")
         .single();

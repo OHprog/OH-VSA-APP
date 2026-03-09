@@ -64,7 +64,7 @@ export default function Suppliers() {
   const [form, setForm] = useState<SupplierForm>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const { role, isAdmin, isAnalyst, user } = useAuth();
+  const { role, isAdmin, isAnalyst, user, profile } = useAuth();
   const { toast } = useToast();
   const canEdit = isAdmin || isAnalyst;
 
@@ -73,7 +73,7 @@ export default function Suppliers() {
     try {
       if (search.trim()) {
         const { data, error } = await supabase.rpc("search_suppliers", {
-          p_query: search.trim(),
+          search_term: search.trim(),
           p_limit: 50,
         });
         if (error) throw error;
@@ -100,9 +100,14 @@ export default function Suppliers() {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user?.id || !profile?.organization_id) {
+      toast({ title: "Not authenticated", description: "Please log in to add a supplier.", variant: "destructive" });
+      return;
+    }
     setSubmitting(true);
     try {
       const { error } = await supabase.from("suppliers").insert({
+        organization_id: profile.organization_id,
         company_name: form.company_name,
         ico: form.ico || null,
         country: form.country || null,
@@ -111,7 +116,7 @@ export default function Suppliers() {
         sector: form.sector || null,
         website_url: form.website_url || null,
         notes: form.notes || null,
-        created_by: user?.id,
+        created_by: user.id,
       }).select().single();
       if (error) throw error;
       toast({ title: "Supplier added" });
@@ -182,61 +187,6 @@ export default function Suppliers() {
     }
   };
 
-  const FormFields = ({ onSubmit, submitLabel }: { onSubmit: (e: React.FormEvent) => void; submitLabel: string }) => (
-    <form className="space-y-4" onSubmit={onSubmit}>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2 col-span-2">
-          <Label>Company Name</Label>
-          <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" required />
-        </div>
-        <div className="space-y-2">
-          <Label>IČO (8-digit)</Label>
-          <Input value={form.ico} onChange={(e) => setForm({ ...form, ico: e.target.value })} placeholder="12345678" maxLength={8} pattern="\d{8}" />
-        </div>
-        <div className="space-y-2">
-          <Label>Country</Label>
-          <Select value={form.country} onValueChange={(v) => setForm({ ...form, country: v })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {countries.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>City</Label>
-          <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Prague" />
-        </div>
-        <div className="space-y-2">
-          <Label>Address</Label>
-          <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Street 123" />
-        </div>
-        <div className="space-y-2">
-          <Label>Sector</Label>
-          <Select value={form.sector} onValueChange={(v) => setForm({ ...form, sector: v })}>
-            <SelectTrigger><SelectValue placeholder="Select sector" /></SelectTrigger>
-            <SelectContent>
-              {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Website</Label>
-          <Input value={form.website_url} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://..." type="url" />
-        </div>
-        <div className="space-y-2 col-span-2">
-          <Label>Notes</Label>
-          <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Additional notes..." rows={3} />
-        </div>
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={() => { setAddOpen(false); setEditOpen(false); }}>Cancel</Button>
-        <Button type="submit" className="bg-accent text-accent-foreground hover:bg-accent/90" disabled={submitting}>
-          {submitting ? "Saving..." : submitLabel}
-        </Button>
-      </div>
-    </form>
-  );
-
   return (
     <div className="space-y-6 max-w-7xl">
       <div className="flex items-center justify-between">
@@ -253,7 +203,58 @@ export default function Suppliers() {
             </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader><DialogTitle>Add New Supplier</DialogTitle></DialogHeader>
-              <FormFields onSubmit={handleAdd} submitLabel="Save Supplier" />
+              <form className="space-y-4" onSubmit={handleAdd}>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2 col-span-2">
+                    <Label>Company Name</Label>
+                    <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>IČO (8-digit)</Label>
+                    <Input value={form.ico} onChange={(e) => setForm({ ...form, ico: e.target.value })} placeholder="12345678" maxLength={8} pattern="\d{8}" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Country</Label>
+                    <Select value={form.country} onValueChange={(v) => setForm({ ...form, country: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {countries.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>City</Label>
+                    <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Prague" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Address</Label>
+                    <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Street 123" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Sector</Label>
+                    <Select value={form.sector} onValueChange={(v) => setForm({ ...form, sector: v })}>
+                      <SelectTrigger><SelectValue placeholder="Select sector" /></SelectTrigger>
+                      <SelectContent>
+                        {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Website</Label>
+                    <Input value={form.website_url} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://..." type="url" />
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label>Notes</Label>
+                    <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Additional notes..." rows={3} />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => { setAddOpen(false); setEditOpen(false); }}>Cancel</Button>
+                  <Button type="submit" className="bg-accent text-accent-foreground hover:bg-accent/90" disabled={submitting}>
+                    {submitting ? "Saving..." : "Save Supplier"}
+                  </Button>
+                </div>
+              </form>
             </DialogContent>
           </Dialog>
         )}
@@ -268,7 +269,58 @@ export default function Suppliers() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Edit Supplier</DialogTitle></DialogHeader>
-          <FormFields onSubmit={handleEdit} submitLabel="Update Supplier" />
+          <form className="space-y-4" onSubmit={handleEdit}>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2 col-span-2">
+                <Label>Company Name</Label>
+                <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" required />
+              </div>
+              <div className="space-y-2">
+                <Label>IČO (8-digit)</Label>
+                <Input value={form.ico} onChange={(e) => setForm({ ...form, ico: e.target.value })} placeholder="12345678" maxLength={8} pattern="\d{8}" />
+              </div>
+              <div className="space-y-2">
+                <Label>Country</Label>
+                <Select value={form.country} onValueChange={(v) => setForm({ ...form, country: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {countries.map((c) => <SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>City</Label>
+                <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Prague" />
+              </div>
+              <div className="space-y-2">
+                <Label>Address</Label>
+                <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Street 123" />
+              </div>
+              <div className="space-y-2">
+                <Label>Sector</Label>
+                <Select value={form.sector} onValueChange={(v) => setForm({ ...form, sector: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select sector" /></SelectTrigger>
+                  <SelectContent>
+                    {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Website</Label>
+                <Input value={form.website_url} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://..." type="url" />
+              </div>
+              <div className="space-y-2 col-span-2">
+                <Label>Notes</Label>
+                <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Additional notes..." rows={3} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => { setAddOpen(false); setEditOpen(false); }}>Cancel</Button>
+              <Button type="submit" className="bg-accent text-accent-foreground hover:bg-accent/90" disabled={submitting}>
+                {submitting ? "Saving..." : "Update Supplier"}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 

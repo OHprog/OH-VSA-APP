@@ -74,19 +74,20 @@ export async function completeScrapeRun(
 /**
  * Bulk-insert article records for an evaluation.
  * Stores only a 500-char content snippet — full content stays in MongoDB.
+ * runId may be null if startScrapeRun failed — articles are still saved without a scrape_run_id link.
  */
 export async function saveArticlesForEvaluation(
-  runId: string,
+  runId: string | null,
   evaluationId: string,
   ico: string,
   articles: ScrapedArticle[]
 ): Promise<void> {
-  if (!runId || articles.length === 0) return;
+  if (articles.length === 0) return;
 
   const supabase = getSupabase();
 
   const rows = articles.map((a) => ({
-    scrape_run_id: runId,
+    scrape_run_id: runId || null,
     evaluation_id: evaluationId,
     supplier_ico: ico,
     source_name: a.source_name,
@@ -108,6 +109,30 @@ export async function saveArticlesForEvaluation(
     log('error', 'SupabaseStorage', `Failed to save ${rows.length} articles for evaluation ${evaluationId}: ${error.message}`);
   } else {
     log('info', 'SupabaseStorage', `Saved ${rows.length} Firecrawl articles to Supabase for evaluation ${evaluationId}`);
+  }
+}
+
+/**
+ * Store per-source AI summaries on a completed scrape run.
+ * summaries is a map of { source_name: summary_text }.
+ */
+export async function updateScrapeRunSummaries(
+  runId: string,
+  summaries: Record<string, string>
+): Promise<void> {
+  if (!runId || Object.keys(summaries).length === 0) return;
+
+  const supabase = getSupabase();
+
+  const { error } = await supabase
+    .from('firecrawl_scrape_runs')
+    .update({ source_summaries: summaries })
+    .eq('id', runId);
+
+  if (error) {
+    log('error', 'SupabaseStorage', `Failed to save source summaries for run ${runId}: ${error.message}`);
+  } else {
+    log('info', 'SupabaseStorage', `Saved AI summaries for ${Object.keys(summaries).length} sources on run ${runId}`);
   }
 }
 

@@ -131,6 +131,128 @@ export type Database = {
         }
         Relationships: []
       }
+      firecrawl_articles: {
+        Row: {
+          content_snippet: string | null
+          evaluation_id: string | null
+          id: string
+          language: string | null
+          metadata: Json | null
+          published_at: string | null
+          scraped_at: string | null
+          scrape_run_id: string | null
+          source_name: string
+          source_type: string
+          source_url: string
+          supplier_ico: string
+          supplier_mentions: string[] | null
+          tags: string[] | null
+          title: string | null
+        }
+        Insert: {
+          content_snippet?: string | null
+          evaluation_id?: string | null
+          id?: string
+          language?: string | null
+          metadata?: Json | null
+          published_at?: string | null
+          scraped_at?: string | null
+          scrape_run_id?: string | null
+          source_name: string
+          source_type: string
+          source_url: string
+          supplier_ico: string
+          supplier_mentions?: string[] | null
+          tags?: string[] | null
+          title?: string | null
+        }
+        Update: {
+          content_snippet?: string | null
+          evaluation_id?: string | null
+          id?: string
+          language?: string | null
+          metadata?: Json | null
+          published_at?: string | null
+          scraped_at?: string | null
+          scrape_run_id?: string | null
+          source_name?: string
+          source_type?: string
+          source_url?: string
+          supplier_ico?: string
+          supplier_mentions?: string[] | null
+          tags?: string[] | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "firecrawl_articles_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "evaluations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "firecrawl_articles_scrape_run_id_fkey"
+            columns: ["scrape_run_id"]
+            isOneToOne: false
+            referencedRelation: "firecrawl_scrape_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      firecrawl_scrape_runs: {
+        Row: {
+          articles_found: number | null
+          articles_stored: number | null
+          company_name: string
+          completed_at: string | null
+          created_at: string | null
+          duration_ms: number | null
+          errors: string[] | null
+          evaluation_id: string | null
+          id: string
+          sources_scraped: number | null
+          status: string
+          supplier_ico: string
+        }
+        Insert: {
+          articles_found?: number | null
+          articles_stored?: number | null
+          company_name: string
+          completed_at?: string | null
+          created_at?: string | null
+          duration_ms?: number | null
+          errors?: string[] | null
+          evaluation_id?: string | null
+          id?: string
+          sources_scraped?: number | null
+          status?: string
+          supplier_ico: string
+        }
+        Update: {
+          articles_found?: number | null
+          articles_stored?: number | null
+          company_name?: string
+          completed_at?: string | null
+          created_at?: string | null
+          duration_ms?: number | null
+          errors?: string[] | null
+          evaluation_id?: string | null
+          id?: string
+          sources_scraped?: number | null
+          status?: string
+          supplier_ico?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "firecrawl_scrape_runs_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "evaluations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       evaluation_modules: {
         Row: {
           completed_at: string | null

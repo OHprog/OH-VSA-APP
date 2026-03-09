@@ -9,8 +9,10 @@ import {
   startScrapeRun,
   completeScrapeRun,
   saveArticlesForEvaluation,
+  updateScrapeRunSummaries,
   trackFirecrawlUsage,
 } from '../utils/supabase-storage';
+import { generateSourceSummaries } from '../utils/ai-summarizer';
 import type { ScrapedArticle } from '../types';
 
 dotenv.config();
@@ -98,9 +100,15 @@ async function runEvaluationPipeline(
     try {
       prefetchedArticles = await scrapeNewsForSupplier(companyName, ico);
       await completeScrapeRun(runId!, prefetchedArticles, Date.now() - scrapeStart, []);
-      await saveArticlesForEvaluation(runId!, evaluationId, ico, prefetchedArticles);
+      await saveArticlesForEvaluation(runId, evaluationId, ico, prefetchedArticles);
       await trackFirecrawlUsage(prefetchedArticles.length);
       log('info', 'Pipeline', `Pre-scraped ${prefetchedArticles.length} articles for ${companyName}`);
+
+      // Generate per-source AI summaries and store on the scrape run record
+      if (runId && prefetchedArticles.length > 0) {
+        const summaries = await generateSourceSummaries(prefetchedArticles);
+        await updateScrapeRunSummaries(runId, summaries);
+      }
     } catch (err: any) {
       log('warn', 'Pipeline', `Pre-scrape failed for ${companyName}: ${err.message}`);
       await completeScrapeRun(runId!, [], Date.now() - scrapeStart, [err.message]);

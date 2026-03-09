@@ -138,9 +138,8 @@ export default function EvaluationDetail() {
     if (!evaluation || !user) return;
     setGeneratingReport(true);
     try {
-      const { error } = await supabase.from("reports").insert({
-        evaluation_id: evaluation.id,
-        file_url: null,
+      const { error } = await supabase.rpc("create_report", {
+        p_evaluation_id: evaluation.id,
       });
       if (error) throw error;
       toast({ title: "Report generation queued", description: "It will appear in the Reports page." });

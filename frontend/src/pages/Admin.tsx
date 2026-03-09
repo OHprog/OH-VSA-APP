@@ -139,7 +139,7 @@ export default function Admin() {
 
   // Data Sources tab state
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
-  const [sourcesLoading, setSourcesLoading] = useState(true);
+  const [sourcesLoading, setSourcesLoading] = useState(false);
   const [editSource, setEditSource] = useState<DataSource | null>(null);
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   const [isAddingSource, setIsAddingSource] = useState(false);
@@ -183,11 +183,15 @@ export default function Admin() {
   // ─── Fetch Data Sources ──────────────────────────────
   const fetchDataSources = async () => {
     setSourcesLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("data_sources")
       .select("*")
-      .order("module_type, name") as { data: DataSource[] | null };
-    setDataSources(data ?? []);
+      .order("module_type, name");
+    console.log("[data_sources]", { data, error });
+    if (error) {
+      toast({ title: "Error loading data sources", description: error.message, variant: "destructive" });
+    }
+    setDataSources((data as DataSource[]) ?? []);
     setSourcesLoading(false);
   };
 
@@ -239,7 +243,7 @@ export default function Admin() {
     setSystemLoading(false);
   };
 
-  useEffect(() => { fetchUsers(); }, []);
+  useEffect(() => { fetchUsers(); fetchDataSources(); }, []);
 
   // ─── Role Change ─────────────────────────────────────
   const handleRoleChange = async () => {
@@ -396,7 +400,7 @@ export default function Admin() {
       </div>
 
       <Tabs defaultValue="users" onValueChange={(v) => {
-        if (v === "sources" && dataSources.length === 0) fetchDataSources();
+        if (v === "sources") fetchDataSources();
         if (v === "system") fetchSystemData();
       }}>
         <TabsList>
@@ -516,6 +520,11 @@ export default function Admin() {
           {sourcesLoading ? (
             <div className="flex justify-center py-8">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+            </div>
+          ) : Object.keys(groupedSources).length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+              <Database className="h-8 w-8 opacity-30" />
+              <p className="text-sm">No data sources found. The table may be empty or the database migration has not been applied.</p>
             </div>
           ) : (
             Object.entries(groupedSources).map(([moduleType, sources]) => (
