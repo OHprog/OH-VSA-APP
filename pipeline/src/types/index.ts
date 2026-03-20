@@ -81,6 +81,43 @@ export interface EnergyLicenseData {
 }
 
 // ============================================================
+// Financial snapshot types
+// ============================================================
+
+export interface FinancialFigures {
+  revenue:             number | null;   // Tržby celkem (CZK thousands)
+  operating_profit:    number | null;   // Provozní výsledek hospodaření
+  net_profit:          number | null;   // Výsledek hospodaření za účetní období
+  total_assets:        number | null;   // Aktiva celkem
+  equity:              number | null;   // Vlastní kapitál
+  total_liabilities:   number | null;   // Cizí zdroje
+  current_assets:      number | null;   // Oběžná aktiva
+  current_liabilities: number | null;   // Krátkodobé závazky
+}
+
+export interface FinancialRatios {
+  profit_margin:  number | null;   // net_profit / revenue
+  equity_ratio:   number | null;   // equity / total_assets
+  current_ratio:  number | null;   // current_assets / current_liabilities
+  debt_to_equity: number | null;   // total_liabilities / equity
+  roa:            number | null;   // net_profit / total_assets
+}
+
+export interface FinancialSnapshot {
+  id:             string | null;   // UUID, null before first DB save
+  supplier_ico:   string;
+  company_name:   string;
+  fiscal_year:    number;
+  source_url:     string | null;
+  document_type:  string | null;
+  scraped_at:     string;          // ISO timestamp
+  data_complete:  boolean;
+  figures:        FinancialFigures;
+  ratios:         FinancialRatios;
+  raw_extraction: Record<string, any>;
+}
+
+// ============================================================
 // Scraper configuration
 // ============================================================
 

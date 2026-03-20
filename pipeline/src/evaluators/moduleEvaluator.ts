@@ -4,7 +4,9 @@ import { lookupCompanyByICO } from '../scrapers/ares';
 import { checkInsolvency } from '../scrapers/insolvency';
 import { checkEnergyLicenses } from '../scrapers/energy';
 import { scrapeNewsForSupplier } from '../scrapers/firecrawl-scraper';
-import type { AresCompanyData, InsolvencyRecord, EnergyLicenseData, ScrapedArticle } from '../types';
+import { scrapeFinancialData } from '../scrapers/financial-scraper';
+import { getFinancialSnapshot, saveFinancialSnapshot, linkEvaluationToSnapshot } from '../utils/financial-storage';
+import type { AresCompanyData, InsolvencyRecord, EnergyLicenseData, ScrapedArticle, FinancialSnapshot } from '../types';
 
 // ============================================================
 // Types
@@ -46,7 +48,7 @@ export async function runModule(
 
     switch (moduleType) {
       case 'financial':
-        result = await evaluateFinancial(ico, companyName);
+        result = await evaluateFinancial(evaluationId, ico, companyName);
         break;
       case 'compliance':
         result = await evaluateCompliance(ico, companyName);
@@ -103,10 +105,18 @@ export async function runModule(
 
 // ============================================================
 // Module: Financial Health
-// Data source: ARES (company fundamentals)
+// Data sources: ARES (company fundamentals) + Sbírka listin (financial statements)
+//
+// Determinism: each evaluation is linked to the exact snapshot that produced its score.
+// Cache: if a snapshot < 90 days old exists, it is reused (no re-scrape).
+// Fallback: if no financial statement data is available, ARES-only scoring applies.
 // ============================================================
 
-async function evaluateFinancial(ico: string, companyName: string): Promise<ModuleResult> {
+async function evaluateFinancial(
+  evaluationId: string,
+  ico: string,
+  companyName: string
+): Promise<ModuleResult> {
   // Non-Czech companies have no IČO — skip ARES, return neutral assessment
   if (!ico) {
     return {
@@ -138,69 +148,193 @@ async function evaluateFinancial(ico: string, companyName: string): Promise<Modu
     };
   }
 
-  let score = 70;
-  const findings: string[] = [];
-  const sources: { url: string; title: string }[] = [
-    { url: `https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/${ico}`, title: 'ARES – Czech Business Register' },
-  ];
+  // --- Snapshot: cache check or fresh scrape ---
+  let snapshot: FinancialSnapshot | null = await getFinancialSnapshot(ico, 90);
 
-  // Status assessment
-  if (ares.status === 'active') {
-    score += 10;
-    findings.push(`Company is actively registered: ${ares.company_name}`);
-  } else if (ares.status === 'in_liquidation') {
-    score -= 30;
-    findings.push(`⚠️ Company is in liquidation — significant financial risk.`);
-  } else if (ares.status === 'inactive') {
-    score -= 20;
-    findings.push(`⚠️ Company is inactive in the ARES registry.`);
-  }
+  if (!snapshot) {
+    log('info', 'Evaluator', `No cached snapshot for ${ico} — scraping financial statements`);
+    snapshot = await scrapeFinancialData(ico, companyName, ares.financial_statements_url);
 
-  // Registration age
-  if (ares.registration_date) {
-    const years = (Date.now() - new Date(ares.registration_date).getTime()) / (1000 * 60 * 60 * 24 * 365);
-    if (years >= 5) {
-      score += 5;
-      findings.push(`Established company — registered since ${ares.registration_date.slice(0, 10)} (${Math.floor(years)} years).`);
-    } else {
-      findings.push(`Newer company — registered ${Math.floor(years)} year(s) ago.`);
+    if (snapshot) {
+      const snapshotId = await saveFinancialSnapshot(snapshot);
+      if (snapshotId) {
+        snapshot = { ...snapshot, id: snapshotId };
+      }
     }
-  }
-
-  // Legal form
-  if (ares.legal_form) {
-    findings.push(`Legal form: ${ares.legal_form}`);
-  }
-
-  // Address
-  if (ares.address) {
-    findings.push(`Registered address: ${ares.address}`);
-  }
-
-  // Business activities
-  if (ares.business_activities.length > 0) {
-    findings.push(`Business activities: ${ares.business_activities.slice(0, 3).join('; ')}`);
-    score += 5;
-  }
-
-  // Financial statements availability
-  if (ares.financial_statements_url) {
-    sources.push({ url: ares.financial_statements_url, title: 'Sbírka listin – Financial Statements' });
-    score += 5;
-    findings.push('Financial statements available in the Collection of Documents (Sbírka listin).');
   } else {
-    findings.push('No financial statements URL available in ARES.');
+    log('info', 'Evaluator', `Using cached financial snapshot for ${ico} (fiscal year ${snapshot.fiscal_year})`);
   }
 
-  score = clamp(score, 0, 100);
+  // Link this evaluation to the snapshot so the score is permanently traceable
+  if (snapshot?.id) {
+    await linkEvaluationToSnapshot(evaluationId, snapshot.id);
+  }
+
+  // --- Deterministic scoring ---
+  const { score, scoreBreakdown, findings, sources } = computeFinancialScore(ares, snapshot);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Financial Health', score, ares.company_name, ares.status),
+    summary: buildSummary('Financial Health', score, ares.company_name,
+      snapshot?.data_complete
+        ? `fiscal year ${snapshot.fiscal_year} financial data`
+        : 'ARES registry data only'),
     findings,
     sources,
-    raw_data: { ares },
+    raw_data: {
+      snapshot_id:     snapshot?.id ?? null,
+      fiscal_year:     snapshot?.fiscal_year ?? null,
+      data_complete:   snapshot?.data_complete ?? false,
+      source_url:      snapshot?.source_url ?? null,
+      figures:         snapshot?.figures ?? null,
+      ratios:          snapshot?.ratios ?? null,
+      score_breakdown: scoreBreakdown,
+      fallback_mode:   !snapshot,
+      ares,
+    },
   };
+}
+
+/**
+ * Compute the financial score as a weighted average of four components.
+ * Pure function — same inputs always produce the same output.
+ *
+ * Weights:
+ *   Profitability  30%  (profit_margin)
+ *   Liquidity      25%  (current_ratio)
+ *   Solvency       20%  (equity_ratio)
+ *   Company health 25%  (ARES status + registration age)
+ */
+function computeFinancialScore(
+  ares: AresCompanyData,
+  snapshot: FinancialSnapshot | null
+): {
+  score: number;
+  scoreBreakdown: Record<string, any>;
+  findings: string[];
+  sources: { url: string; title: string }[];
+} {
+  const findings: string[] = [];
+  const sources: { url: string; title: string }[] = [
+    { url: `https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/${ares.ico}`, title: 'ARES – Czech Business Register' },
+  ];
+
+  // ── Component 1: Profitability (profit_margin) ────────────────────────
+  const profitMargin = snapshot?.ratios.profit_margin ?? null;
+  let profScore: number;
+  if (profitMargin === null)        profScore = 50;
+  else if (profitMargin >= 0.10)    profScore = 100;
+  else if (profitMargin >= 0.05)    profScore = 75;
+  else if (profitMargin >= 0.01)    profScore = 50;
+  else if (profitMargin >= 0)       profScore = 30;
+  else                              profScore = 10;
+
+  if (snapshot?.figures.net_profit !== null && snapshot?.figures.revenue !== null) {
+    const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
+    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)} CZK thousands).`);
+  } else if (snapshot && !snapshot.data_complete) {
+    findings.push('Profitability data not available in public financial statements — neutral score applied.');
+  }
+
+  // ── Component 2: Liquidity (current_ratio) ───────────────────────────
+  const currentRatio = snapshot?.ratios.current_ratio ?? null;
+  let liqScore: number;
+  if (currentRatio === null)        liqScore = 50;
+  else if (currentRatio >= 2.0)     liqScore = 100;
+  else if (currentRatio >= 1.5)     liqScore = 80;
+  else if (currentRatio >= 1.0)     liqScore = 55;
+  else if (currentRatio >= 0.5)     liqScore = 30;
+  else                              liqScore = 10;
+
+  if (currentRatio !== null) {
+    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities).`);
+    if (currentRatio < 1.0) findings.push('Current ratio below 1.0 — potential short-term liquidity concern.');
+  }
+
+  // ── Component 3: Solvency (equity_ratio) ─────────────────────────────
+  const equityRatio = snapshot?.ratios.equity_ratio ?? null;
+  let solScore: number;
+  if (equityRatio === null)         solScore = 50;
+  else if (equityRatio >= 0.50)     solScore = 100;
+  else if (equityRatio >= 0.30)     solScore = 75;
+  else if (equityRatio >= 0.10)     solScore = 50;
+  else if (equityRatio >= 0.00)     solScore = 30;
+  else                              solScore = 5;
+
+  if (equityRatio !== null) {
+    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets).`);
+    if (equityRatio < 0) findings.push('Negative equity — company liabilities exceed assets.');
+  }
+
+  // ── Component 4: Company health (ARES status + age) ──────────────────
+  const yearsOld = ares.registration_date
+    ? (Date.now() - new Date(ares.registration_date).getTime()) / (1000 * 60 * 60 * 24 * 365)
+    : null;
+
+  let healthScore: number;
+  if (ares.status === 'in_liquidation') {
+    healthScore = 10;
+    findings.push('Company is in liquidation — significant financial risk.');
+  } else if (ares.status === 'inactive') {
+    healthScore = 20;
+    findings.push('Company is inactive in the ARES registry.');
+  } else {
+    // active
+    if (yearsOld === null)          healthScore = 65;
+    else if (yearsOld >= 10)        healthScore = 100;
+    else if (yearsOld >= 5)         healthScore = 80;
+    else if (yearsOld >= 2)         healthScore = 65;
+    else                            healthScore = 50;
+
+    findings.push(`Company is actively registered: ${ares.company_name}.`);
+    if (yearsOld !== null) {
+      findings.push(`Registered since ${ares.registration_date.slice(0, 10)} (${Math.floor(yearsOld)} years).`);
+    }
+  }
+
+  if (ares.legal_form)  findings.push(`Legal form: ${ares.legal_form}.`);
+  if (ares.address)     findings.push(`Registered address: ${ares.address}.`);
+  if (ares.business_activities.length > 0) {
+    findings.push(`Business activities: ${ares.business_activities.slice(0, 3).join('; ')}.`);
+  }
+
+  // Financial statements source link
+  if (ares.financial_statements_url) {
+    sources.push({ url: ares.financial_statements_url, title: 'Sbírka listin – Financial Statements' });
+  }
+  if (snapshot?.source_url) {
+    sources.push({ url: snapshot.source_url, title: `Účetní závěrka ${snapshot.fiscal_year}` });
+  }
+
+  if (!snapshot) {
+    findings.push('No financial statement data available — ARES-only assessment applied.');
+  } else if (!snapshot.data_complete) {
+    findings.push('Partial financial data extracted — some ratios could not be computed.');
+  } else {
+    findings.push(`Financial data from fiscal year ${snapshot.fiscal_year} — complete extraction.`);
+  }
+
+  // ── Weighted total ────────────────────────────────────────────────────
+  const score = clamp(
+    Math.round(profScore * 0.30 + liqScore * 0.25 + solScore * 0.20 + healthScore * 0.25),
+    0, 100
+  );
+
+  const scoreBreakdown = {
+    profitability:  { score: profScore,   weight: 0.30, value: profitMargin },
+    liquidity:      { score: liqScore,    weight: 0.25, value: currentRatio },
+    solvency:       { score: solScore,    weight: 0.20, value: equityRatio },
+    company_health: { score: healthScore, weight: 0.25, ares_status: ares.status, years_old: yearsOld ? Math.floor(yearsOld) : null },
+  };
+
+  return { score, scoreBreakdown, findings, sources };
+}
+
+/** Format a financial number for display (rounds to integer, adds thousands separator). */
+function fmtNumber(n: number | null): string {
+  if (n === null) return 'N/A';
+  return Math.round(n).toLocaleString('cs-CZ');
 }
 
 // ============================================================
