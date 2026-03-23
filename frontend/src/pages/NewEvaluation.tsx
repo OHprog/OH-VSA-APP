@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ interface SupplierResult {
   ico: string | null;
   sector: string | null;
   country: string | null;
+  parent_company_name?: string | null;
 }
 
 const sectors = ["Telecom", "Construction", "IT", "Energy", "Logistics", "Other"];
@@ -49,8 +50,26 @@ export default function NewEvaluation() {
   const [quickAdding, setQuickAdding] = useState(false);
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { isAdmin, isAnalyst, user, profile } = useAuth();
   const { toast } = useToast();
+
+  // Auto-select supplier from ?supplier_id query param (used by "Evaluate Parent" flow)
+  useEffect(() => {
+    const supplierId = searchParams.get("supplier_id");
+    if (!supplierId) return;
+    supabase.from("supplier_summary")
+      .select("id, company_name, ico, sector, country, parent_company_name")
+      .eq("id", supplierId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setSelectedSupplier(data as SupplierResult);
+          setSearchTerm((data as any).company_name);
+          setStep(2);
+        }
+      });
+  }, []);
 
   // Permission check
   useEffect(() => {
@@ -256,6 +275,11 @@ export default function NewEvaluation() {
                   {selectedSupplier.sector && ` · ${selectedSupplier.sector}`}
                   {selectedSupplier.country && ` · ${selectedSupplier.country}`}
                 </p>
+                {selectedSupplier.parent_company_name && (
+                  <p className="text-xs text-muted-foreground">
+                    Part of: <span className="font-medium">{selectedSupplier.parent_company_name}</span>
+                  </p>
+                )}
               </div>
             )}
           </CardContent>

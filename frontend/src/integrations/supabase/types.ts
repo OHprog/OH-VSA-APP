@@ -16,120 +16,321 @@ export type Database = {
     Tables: {
       api_usage: {
         Row: {
-          cost_estimate: number
-          created_at: string
-          date: string
+          cost_estimate: number | null
+          created_at: string | null
+          date: string | null
           endpoint: string | null
           id: string
           organization_id: string | null
-          request_count: number
+          request_count: number | null
           service: string
-          tokens_used: number
+          tokens_used: number | null
         }
         Insert: {
-          cost_estimate?: number
-          created_at?: string
-          date?: string
+          cost_estimate?: number | null
+          created_at?: string | null
+          date?: string | null
           endpoint?: string | null
           id?: string
           organization_id?: string | null
-          request_count?: number
+          request_count?: number | null
           service: string
-          tokens_used?: number
+          tokens_used?: number | null
         }
         Update: {
-          cost_estimate?: number
-          created_at?: string
-          date?: string
+          cost_estimate?: number | null
+          created_at?: string | null
+          date?: string | null
           endpoint?: string | null
           id?: string
           organization_id?: string | null
-          request_count?: number
+          request_count?: number | null
           service?: string
-          tokens_used?: number
+          tokens_used?: number | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "api_usage_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       audit_log: {
         Row: {
           action: string
-          created_at: string
+          created_at: string | null
           details: Json | null
           entity_id: string | null
           entity_type: string | null
           id: string
+          ip_address: unknown
           organization_id: string | null
           user_id: string | null
         }
         Insert: {
           action: string
-          created_at?: string
+          created_at?: string | null
           details?: Json | null
           entity_id?: string | null
           entity_type?: string | null
           id?: string
+          ip_address?: unknown
           organization_id?: string | null
           user_id?: string | null
         }
         Update: {
           action?: string
-          created_at?: string
+          created_at?: string | null
           details?: Json | null
           entity_id?: string | null
           entity_type?: string | null
           id?: string
+          ip_address?: unknown
           organization_id?: string | null
           user_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       data_sources: {
         Row: {
+          api_key_ref: string | null
           base_url: string | null
-          created_at: string
+          created_at: string | null
           id: string
-          is_free: boolean
+          is_free: boolean | null
           last_error: string | null
           last_sync_at: string | null
-          module_type: string
+          module_type: Database["public"]["Enums"]["module_type"]
           name: string
           notes: string | null
           schedule_cron: string | null
+          scrape_config: Json | null
           source_type: string
-          status: string
-          updated_at: string
+          status: Database["public"]["Enums"]["data_source_status"] | null
+          updated_at: string | null
         }
         Insert: {
+          api_key_ref?: string | null
           base_url?: string | null
-          created_at?: string
+          created_at?: string | null
           id?: string
-          is_free?: boolean
+          is_free?: boolean | null
           last_error?: string | null
           last_sync_at?: string | null
-          module_type: string
+          module_type: Database["public"]["Enums"]["module_type"]
           name: string
           notes?: string | null
           schedule_cron?: string | null
-          source_type?: string
-          status?: string
-          updated_at?: string
+          scrape_config?: Json | null
+          source_type: string
+          status?: Database["public"]["Enums"]["data_source_status"] | null
+          updated_at?: string | null
         }
         Update: {
+          api_key_ref?: string | null
           base_url?: string | null
-          created_at?: string
+          created_at?: string | null
           id?: string
-          is_free?: boolean
+          is_free?: boolean | null
           last_error?: string | null
           last_sync_at?: string | null
-          module_type?: string
+          module_type?: Database["public"]["Enums"]["module_type"]
           name?: string
           notes?: string | null
           schedule_cron?: string | null
+          scrape_config?: Json | null
           source_type?: string
-          status?: string
-          updated_at?: string
+          status?: Database["public"]["Enums"]["data_source_status"] | null
+          updated_at?: string | null
         }
         Relationships: []
+      }
+      evaluation_financial_links: {
+        Row: {
+          evaluation_id: string
+          id: string
+          linked_at: string
+          snapshot_id: string
+        }
+        Insert: {
+          evaluation_id: string
+          id?: string
+          linked_at?: string
+          snapshot_id: string
+        }
+        Update: {
+          evaluation_id?: string
+          id?: string
+          linked_at?: string
+          snapshot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evaluation_financial_links_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: true
+            referencedRelation: "evaluation_list"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evaluation_financial_links_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: true
+            referencedRelation: "evaluations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evaluation_financial_links_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "supplier_financial_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evaluation_modules: {
+        Row: {
+          completed_at: string | null
+          error_message: string | null
+          evaluation_id: string
+          findings: Json | null
+          id: string
+          module_type: Database["public"]["Enums"]["module_type"]
+          raw_data: Json | null
+          risk_level: Database["public"]["Enums"]["risk_level"] | null
+          score: number | null
+          sources: Json | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["module_status"] | null
+          summary: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          error_message?: string | null
+          evaluation_id: string
+          findings?: Json | null
+          id?: string
+          module_type: Database["public"]["Enums"]["module_type"]
+          raw_data?: Json | null
+          risk_level?: Database["public"]["Enums"]["risk_level"] | null
+          score?: number | null
+          sources?: Json | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["module_status"] | null
+          summary?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          error_message?: string | null
+          evaluation_id?: string
+          findings?: Json | null
+          id?: string
+          module_type?: Database["public"]["Enums"]["module_type"]
+          raw_data?: Json | null
+          risk_level?: Database["public"]["Enums"]["risk_level"] | null
+          score?: number | null
+          sources?: Json | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["module_status"] | null
+          summary?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evaluation_modules_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "evaluation_list"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evaluation_modules_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "evaluations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evaluations: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          created_by: string | null
+          executive_summary: string | null
+          id: string
+          notes: string | null
+          organization_id: string | null
+          overall_risk_level: Database["public"]["Enums"]["risk_level"] | null
+          overall_score: number | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["evaluation_status"] | null
+          supplier_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          executive_summary?: string | null
+          id?: string
+          notes?: string | null
+          organization_id?: string | null
+          overall_risk_level?: Database["public"]["Enums"]["risk_level"] | null
+          overall_score?: number | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["evaluation_status"] | null
+          supplier_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          executive_summary?: string | null
+          id?: string
+          notes?: string | null
+          organization_id?: string | null
+          overall_risk_level?: Database["public"]["Enums"]["risk_level"] | null
+          overall_score?: number | null
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["evaluation_status"] | null
+          supplier_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evaluations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evaluations_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "supplier_summary"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evaluations_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       firecrawl_articles: {
         Row: {
@@ -139,8 +340,8 @@ export type Database = {
           language: string | null
           metadata: Json | null
           published_at: string | null
-          scraped_at: string | null
           scrape_run_id: string | null
+          scraped_at: string | null
           source_name: string
           source_type: string
           source_url: string
@@ -156,8 +357,8 @@ export type Database = {
           language?: string | null
           metadata?: Json | null
           published_at?: string | null
-          scraped_at?: string | null
           scrape_run_id?: string | null
+          scraped_at?: string | null
           source_name: string
           source_type: string
           source_url: string
@@ -173,8 +374,8 @@ export type Database = {
           language?: string | null
           metadata?: Json | null
           published_at?: string | null
-          scraped_at?: string | null
           scrape_run_id?: string | null
+          scraped_at?: string | null
           source_name?: string
           source_type?: string
           source_url?: string
@@ -184,6 +385,13 @@ export type Database = {
           title?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "firecrawl_articles_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
+            referencedRelation: "evaluation_list"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "firecrawl_articles_evaluation_id_fkey"
             columns: ["evaluation_id"]
@@ -211,6 +419,7 @@ export type Database = {
           errors: string[] | null
           evaluation_id: string | null
           id: string
+          source_summaries: Json | null
           sources_scraped: number | null
           status: string
           supplier_ico: string
@@ -225,6 +434,7 @@ export type Database = {
           errors?: string[] | null
           evaluation_id?: string | null
           id?: string
+          source_summaries?: Json | null
           sources_scraped?: number | null
           status?: string
           supplier_ico: string
@@ -239,6 +449,7 @@ export type Database = {
           errors?: string[] | null
           evaluation_id?: string | null
           id?: string
+          source_summaries?: Json | null
           sources_scraped?: number | null
           status?: string
           supplier_ico?: string
@@ -248,164 +459,232 @@ export type Database = {
             foreignKeyName: "firecrawl_scrape_runs_evaluation_id_fkey"
             columns: ["evaluation_id"]
             isOneToOne: false
+            referencedRelation: "evaluation_list"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "firecrawl_scrape_runs_evaluation_id_fkey"
+            columns: ["evaluation_id"]
+            isOneToOne: false
             referencedRelation: "evaluations"
             referencedColumns: ["id"]
           },
         ]
       }
-      evaluation_modules: {
+      organizations: {
         Row: {
-          completed_at: string | null
-          evaluation_id: string
-          findings: Json | null
+          created_at: string | null
           id: string
-          module_type: string
-          raw_data: Json | null
-          risk_level: string | null
-          score: number | null
-          sources: Json | null
-          started_at: string | null
-          status: string
-          summary: string | null
+          name: string
+          slug: string
+          updated_at: string | null
         }
         Insert: {
-          completed_at?: string | null
-          evaluation_id: string
-          findings?: Json | null
+          created_at?: string | null
           id?: string
-          module_type: string
-          raw_data?: Json | null
-          risk_level?: string | null
-          score?: number | null
-          sources?: Json | null
-          started_at?: string | null
-          status?: string
-          summary?: string | null
+          name: string
+          slug: string
+          updated_at?: string | null
         }
         Update: {
-          completed_at?: string | null
-          evaluation_id?: string
-          findings?: Json | null
+          created_at?: string | null
           id?: string
-          module_type?: string
-          raw_data?: Json | null
-          risk_level?: string | null
-          score?: number | null
-          sources?: Json | null
-          started_at?: string | null
-          status?: string
-          summary?: string | null
+          name?: string
+          slug?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string | null
+          full_name: string | null
+          id: string
+          is_active: boolean | null
+          organization_id: string | null
+          role: Database["public"]["Enums"]["user_role"] | null
+          updated_at: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string | null
+          full_name?: string | null
+          id: string
+          is_active?: boolean | null
+          organization_id?: string | null
+          role?: Database["public"]["Enums"]["user_role"] | null
+          updated_at?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string | null
+          full_name?: string | null
+          id?: string
+          is_active?: boolean | null
+          organization_id?: string | null
+          role?: Database["public"]["Enums"]["user_role"] | null
+          updated_at?: string | null
         }
         Relationships: [
           {
-            foreignKeyName: "evaluation_modules_evaluation_id_fkey"
+            foreignKeyName: "profiles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      questionnaire_responses: {
+        Row: {
+          answers: Json
+          evaluation_id: string | null
+          id: string
+          respondent_department: string | null
+          respondent_id: string | null
+          respondent_name: string | null
+          submitted_at: string | null
+          supplier_id: string
+          template_id: string
+        }
+        Insert: {
+          answers?: Json
+          evaluation_id?: string | null
+          id?: string
+          respondent_department?: string | null
+          respondent_id?: string | null
+          respondent_name?: string | null
+          submitted_at?: string | null
+          supplier_id: string
+          template_id: string
+        }
+        Update: {
+          answers?: Json
+          evaluation_id?: string | null
+          id?: string
+          respondent_department?: string | null
+          respondent_id?: string | null
+          respondent_name?: string | null
+          submitted_at?: string | null
+          supplier_id?: string
+          template_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "questionnaire_responses_evaluation_id_fkey"
             columns: ["evaluation_id"]
             isOneToOne: false
             referencedRelation: "evaluation_list"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "evaluation_modules_evaluation_id_fkey"
+            foreignKeyName: "questionnaire_responses_evaluation_id_fkey"
             columns: ["evaluation_id"]
             isOneToOne: false
             referencedRelation: "evaluations"
             referencedColumns: ["id"]
           },
-        ]
-      }
-      evaluations: {
-        Row: {
-          completed_at: string | null
-          created_at: string
-          created_by: string | null
-          executive_summary: string | null
-          id: string
-          overall_risk_level: string | null
-          overall_score: number | null
-          status: string
-          supplier_id: string
-        }
-        Insert: {
-          completed_at?: string | null
-          created_at?: string
-          created_by?: string | null
-          executive_summary?: string | null
-          id?: string
-          overall_risk_level?: string | null
-          overall_score?: number | null
-          status?: string
-          supplier_id: string
-        }
-        Update: {
-          completed_at?: string | null
-          created_at?: string
-          created_by?: string | null
-          executive_summary?: string | null
-          id?: string
-          overall_risk_level?: string | null
-          overall_score?: number | null
-          status?: string
-          supplier_id?: string
-        }
-        Relationships: [
           {
-            foreignKeyName: "evaluations_supplier_id_fkey"
+            foreignKeyName: "questionnaire_responses_supplier_id_fkey"
             columns: ["supplier_id"]
             isOneToOne: false
             referencedRelation: "supplier_summary"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "evaluations_supplier_id_fkey"
+            foreignKeyName: "questionnaire_responses_supplier_id_fkey"
             columns: ["supplier_id"]
             isOneToOne: false
             referencedRelation: "suppliers"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "questionnaire_responses_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "questionnaire_templates"
+            referencedColumns: ["id"]
+          },
         ]
       }
-      profiles: {
+      questionnaire_templates: {
         Row: {
-          created_at: string
-          full_name: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
           id: string
-          is_active: boolean
-          organization_id: string | null
+          is_active: boolean | null
+          name: string
+          organization_id: string
+          questions: Json
+          updated_at: string | null
         }
         Insert: {
-          created_at?: string
-          full_name?: string | null
-          id: string
-          is_active?: boolean
-          organization_id?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          organization_id: string
+          questions?: Json
+          updated_at?: string | null
         }
         Update: {
-          created_at?: string
-          full_name?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
           id?: string
-          is_active?: boolean
-          organization_id?: string | null
+          is_active?: boolean | null
+          name?: string
+          organization_id?: string
+          questions?: Json
+          updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "questionnaire_templates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reports: {
         Row: {
           evaluation_id: string
+          file_name: string | null
+          file_size_bytes: number | null
           file_url: string | null
-          generated_at: string
+          format: string | null
+          generated_at: string | null
+          generated_by: string | null
           id: string
+          organization_id: string
         }
         Insert: {
           evaluation_id: string
+          file_name?: string | null
+          file_size_bytes?: number | null
           file_url?: string | null
-          generated_at?: string
+          format?: string | null
+          generated_at?: string | null
+          generated_by?: string | null
           id?: string
+          organization_id: string
         }
         Update: {
           evaluation_id?: string
+          file_name?: string | null
+          file_size_bytes?: number | null
           file_url?: string | null
-          generated_at?: string
+          format?: string | null
+          generated_at?: string | null
+          generated_by?: string | null
           id?: string
+          organization_id?: string
         }
         Relationships: [
           {
@@ -422,52 +701,219 @@ export type Database = {
             referencedRelation: "evaluations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "reports_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      scraped_content: {
+        Row: {
+          content: string | null
+          created_at: string | null
+          fts: unknown
+          id: string
+          metadata: Json | null
+          scraped_at: string | null
+          source_name: string
+          title: string | null
+          url: string
+        }
+        Insert: {
+          content?: string | null
+          created_at?: string | null
+          fts?: unknown
+          id?: string
+          metadata?: Json | null
+          scraped_at?: string | null
+          source_name: string
+          title?: string | null
+          url: string
+        }
+        Update: {
+          content?: string | null
+          created_at?: string | null
+          fts?: unknown
+          id?: string
+          metadata?: Json | null
+          scraped_at?: string | null
+          source_name?: string
+          title?: string | null
+          url?: string
+        }
+        Relationships: []
+      }
+      supplier_financial_snapshots: {
+        Row: {
+          company_name: string
+          created_at: string
+          current_assets: number | null
+          current_liabilities: number | null
+          current_ratio: number | null
+          data_complete: boolean
+          debt_to_equity: number | null
+          document_type: string | null
+          equity: number | null
+          equity_ratio: number | null
+          fiscal_year: number
+          id: string
+          net_profit: number | null
+          operating_profit: number | null
+          profit_margin: number | null
+          raw_extraction: Json | null
+          revenue: number | null
+          roa: number | null
+          scraped_at: string
+          source_url: string | null
+          supplier_ico: string
+          total_assets: number | null
+          total_liabilities: number | null
+          updated_at: string
+        }
+        Insert: {
+          company_name: string
+          created_at?: string
+          current_assets?: number | null
+          current_liabilities?: number | null
+          current_ratio?: number | null
+          data_complete?: boolean
+          debt_to_equity?: number | null
+          document_type?: string | null
+          equity?: number | null
+          equity_ratio?: number | null
+          fiscal_year: number
+          id?: string
+          net_profit?: number | null
+          operating_profit?: number | null
+          profit_margin?: number | null
+          raw_extraction?: Json | null
+          revenue?: number | null
+          roa?: number | null
+          scraped_at?: string
+          source_url?: string | null
+          supplier_ico: string
+          total_assets?: number | null
+          total_liabilities?: number | null
+          updated_at?: string
+        }
+        Update: {
+          company_name?: string
+          created_at?: string
+          current_assets?: number | null
+          current_liabilities?: number | null
+          current_ratio?: number | null
+          data_complete?: boolean
+          debt_to_equity?: number | null
+          document_type?: string | null
+          equity?: number | null
+          equity_ratio?: number | null
+          fiscal_year?: number
+          id?: string
+          net_profit?: number | null
+          operating_profit?: number | null
+          profit_margin?: number | null
+          raw_extraction?: Json | null
+          revenue?: number | null
+          roa?: number | null
+          scraped_at?: string
+          source_url?: string | null
+          supplier_ico?: string
+          total_assets?: number | null
+          total_liabilities?: number | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       suppliers: {
         Row: {
           address: string | null
           city: string | null
           company_name: string
+          contact_email: string | null
+          contact_phone: string | null
           country: string | null
-          created_at: string
+          created_at: string | null
           created_by: string | null
+          dic: string | null
           ico: string | null
           id: string
+          is_active: boolean | null
           notes: string | null
+          organization_id: string
+          parent_id: string | null
+          postal_code: string | null
           sector: string | null
-          updated_at: string
+          updated_at: string | null
           website_url: string | null
         }
         Insert: {
           address?: string | null
           city?: string | null
           company_name: string
+          contact_email?: string | null
+          contact_phone?: string | null
           country?: string | null
-          created_at?: string
+          created_at?: string | null
           created_by?: string | null
+          dic?: string | null
           ico?: string | null
           id?: string
+          is_active?: boolean | null
           notes?: string | null
+          organization_id?: string
+          parent_id?: string | null
+          postal_code?: string | null
           sector?: string | null
-          updated_at?: string
+          updated_at?: string | null
           website_url?: string | null
         }
         Update: {
           address?: string | null
           city?: string | null
           company_name?: string
+          contact_email?: string | null
+          contact_phone?: string | null
           country?: string | null
-          created_at?: string
+          created_at?: string | null
           created_by?: string | null
+          dic?: string | null
           ico?: string | null
           id?: string
+          is_active?: boolean | null
           notes?: string | null
+          organization_id?: string
+          parent_id?: string | null
+          postal_code?: string | null
           sector?: string | null
-          updated_at?: string
+          updated_at?: string | null
           website_url?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "suppliers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suppliers_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "supplier_summary"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suppliers_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
@@ -508,14 +954,13 @@ export type Database = {
           completed_at: string | null
           created_at: string | null
           created_by: string | null
-          executive_summary: string | null
           ico: string | null
           id: string | null
           module_count: number | null
           modules_completed: number | null
-          overall_risk_level: string | null
+          overall_risk_level: Database["public"]["Enums"]["risk_level"] | null
           overall_score: number | null
-          status: string | null
+          status: Database["public"]["Enums"]["evaluation_status"] | null
           supplier_id: string | null
         }
         Relationships: [
@@ -540,26 +985,63 @@ export type Database = {
           address: string | null
           city: string | null
           company_name: string | null
+          contact_email: string | null
+          contact_phone: string | null
           country: string | null
           created_at: string | null
           created_by: string | null
+          dic: string | null
           evaluation_count: number | null
           ico: string | null
           id: string | null
-          last_evaluated: string | null
+          is_active: boolean | null
+          last_evaluated_at: string | null
+          latest_risk_level: Database["public"]["Enums"]["risk_level"] | null
+          latest_score: number | null
           notes: string | null
+          organization_id: string | null
+          parent_company_name: string | null
+          parent_id: string | null
+          postal_code: string | null
           sector: string | null
+          subsidiary_count: number | null
           updated_at: string | null
           website_url: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "suppliers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suppliers_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "supplier_summary"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suppliers_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Functions: {
       create_evaluation: {
-        Args: { p_module_types: string[]; p_supplier_id: string }
+        Args: {
+          p_module_types: Database["public"]["Enums"]["module_type"][]
+          p_supplier_id: string
+        }
         Returns: string
       }
+      create_report: { Args: { p_evaluation_id: string }; Returns: string }
       get_evaluation_detail: {
         Args: { p_evaluation_id: string }
         Returns: Json
@@ -572,6 +1054,11 @@ export type Database = {
           total_evaluations: number
         }[]
       }
+      get_user_org_id: { Args: never; Returns: string }
+      get_user_role: {
+        Args: never
+        Returns: Database["public"]["Enums"]["user_role"]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -579,21 +1066,54 @@ export type Database = {
         }
         Returns: boolean
       }
+      log_audit: {
+        Args: {
+          p_action: string
+          p_details?: Json
+          p_entity_id: string
+          p_entity_type: string
+        }
+        Returns: undefined
+      }
+      search_scraped_content: {
+        Args: { p_limit?: number; p_query: string; p_source_name?: string }
+        Returns: {
+          content_preview: string
+          id: string
+          metadata: Json
+          rank: number
+          scraped_at: string
+          source_name: string
+          title: string
+          url: string
+        }[]
+      }
       search_suppliers: {
-        Args: { p_limit?: number; p_query: string }
+        Args: { p_limit?: number; search_term?: string }
         Returns: {
           address: string | null
           city: string | null
           company_name: string | null
+          contact_email: string | null
+          contact_phone: string | null
           country: string | null
           created_at: string | null
           created_by: string | null
+          dic: string | null
           evaluation_count: number | null
           ico: string | null
           id: string | null
-          last_evaluated: string | null
+          is_active: boolean | null
+          last_evaluated_at: string | null
+          latest_risk_level: Database["public"]["Enums"]["risk_level"] | null
+          latest_score: number | null
           notes: string | null
+          organization_id: string | null
+          parent_company_name: string | null
+          parent_id: string | null
+          postal_code: string | null
           sector: string | null
+          subsidiary_count: number | null
           updated_at: string | null
           website_url: string | null
         }[]
@@ -604,9 +1124,29 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       app_role: "admin" | "analyst" | "viewer"
+      data_source_status: "active" | "inactive" | "error"
+      evaluation_status:
+        | "pending"
+        | "running"
+        | "completed"
+        | "failed"
+        | "cancelled"
+      module_status: "queued" | "running" | "completed" | "failed" | "skipped"
+      module_type:
+        | "financial"
+        | "compliance"
+        | "sanctions"
+        | "market"
+        | "esg"
+        | "cyber"
+        | "internal"
+      risk_level: "low" | "medium" | "high" | "critical"
+      user_role: "admin" | "analyst" | "viewer"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -735,6 +1275,26 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "analyst", "viewer"],
+      data_source_status: ["active", "inactive", "error"],
+      evaluation_status: [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+      module_status: ["queued", "running", "completed", "failed", "skipped"],
+      module_type: [
+        "financial",
+        "compliance",
+        "sanctions",
+        "market",
+        "esg",
+        "cyber",
+        "internal",
+      ],
+      risk_level: ["low", "medium", "high", "critical"],
+      user_role: ["admin", "analyst", "viewer"],
     },
   },
 } as const

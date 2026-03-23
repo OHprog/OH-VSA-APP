@@ -12,7 +12,7 @@ import { ScoreGauge } from "@/components/ScoreGauge";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, FileText, RefreshCw, ChevronDown, ExternalLink, CheckCircle2, XCircle, Loader2, Clock, Code } from "lucide-react";
+import { ArrowLeft, FileText, RefreshCw, ChevronDown, ExternalLink, CheckCircle2, XCircle, Loader2, Clock, Code, Building2 } from "lucide-react";
 import { useState, useEffect } from "react";
 
 interface EvalModule {
@@ -81,6 +81,7 @@ export default function EvaluationDetail() {
   const [expandedFindings, setExpandedFindings] = useState<string | null>(null);
   const [expandedRaw, setExpandedRaw] = useState<string | null>(null);
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [parentSupplier, setParentSupplier] = useState<{ id: string; company_name: string } | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -133,6 +134,21 @@ export default function EvaluationDetail() {
 
     return () => { supabase.removeChannel(channel); };
   }, [id, evaluation?.status]);
+
+  // Fetch parent company info once evaluation (and thus supplier_id) is known
+  useEffect(() => {
+    if (!evaluation?.supplier_id) return;
+    supabase
+      .from("supplier_summary")
+      .select("parent_id, parent_company_name")
+      .eq("id", evaluation.supplier_id)
+      .single()
+      .then(({ data }) => {
+        if (data?.parent_id && data?.parent_company_name) {
+          setParentSupplier({ id: data.parent_id as string, company_name: data.parent_company_name as string });
+        }
+      });
+  }, [evaluation?.supplier_id]);
 
   const handleGenerateReport = async () => {
     if (!evaluation || !user) return;
@@ -194,6 +210,19 @@ export default function EvaluationDetail() {
             <span>· {new Date(evaluation.created_at).toLocaleDateString()}</span>
             {evaluation.completed_at && <span>· Completed {new Date(evaluation.completed_at).toLocaleDateString()}</span>}
           </div>
+          {parentSupplier && (
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className="text-xs text-muted-foreground">Part of:</span>
+              <Badge variant="outline" className="text-xs gap-1.5">
+                <Building2 className="h-3 w-3" />
+                {parentSupplier.company_name}
+              </Badge>
+              <Button variant="outline" size="sm" className="h-7 text-xs"
+                onClick={() => navigate(`/evaluations/new?supplier_id=${parentSupplier.id}`)}>
+                Evaluate Parent
+              </Button>
+            </div>
+          )}
         </div>
         <StatusBadge status={evaluation.status} />
       </div>

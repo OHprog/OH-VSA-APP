@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Pencil, Trash2, Building2 } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Building2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -37,7 +37,10 @@ interface Supplier {
   created_at: string;
   updated_at: string;
   evaluation_count: number;
-  last_evaluated: string | null;
+  last_evaluated_at: string | null;
+  parent_id: string | null;
+  parent_company_name: string | null;
+  subsidiary_count: number;
 }
 
 interface SupplierForm {
@@ -49,10 +52,11 @@ interface SupplierForm {
   sector: string;
   website_url: string;
   notes: string;
+  parent_id: string | null;
 }
 
 const emptyForm: SupplierForm = {
-  company_name: "", ico: "", country: "CZ", city: "", address: "", sector: "", website_url: "", notes: "",
+  company_name: "", ico: "", country: "CZ", city: "", address: "", sector: "", website_url: "", notes: "", parent_id: null,
 };
 
 export default function Suppliers() {
@@ -65,6 +69,9 @@ export default function Suppliers() {
   const [form, setForm] = useState<SupplierForm>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [parentSearch, setParentSearch] = useState("");
+  const [parentResults, setParentResults] = useState<{ id: string; company_name: string; ico: string | null }[]>([]);
+  const [parentDropdownOpen, setParentDropdownOpen] = useState(false);
   const { role, isAdmin, isAnalyst, user, profile } = useAuth();
   const { toast } = useToast();
   const canEdit = isAdmin || isAnalyst;
@@ -99,6 +106,18 @@ export default function Suppliers() {
     return () => clearTimeout(timeout);
   }, [fetchSuppliers]);
 
+  useEffect(() => {
+    if (!parentSearch.trim() || form.parent_id) {
+      setParentResults([]);
+      return;
+    }
+    const timeout = setTimeout(async () => {
+      const { data } = await supabase.rpc("search_suppliers", { search_term: parentSearch.trim(), p_limit: 8 });
+      setParentResults((data as any[] ?? []).map((r) => ({ id: r.id, company_name: r.company_name, ico: r.ico })));
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [parentSearch, form.parent_id]);
+
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.id || !profile?.organization_id) {
@@ -117,12 +136,15 @@ export default function Suppliers() {
         sector: form.sector || null,
         website_url: form.website_url || null,
         notes: form.notes || null,
+        parent_id: form.parent_id || null,
         created_by: user.id,
       }).select().single();
       if (error) throw error;
       toast({ title: "Supplier added" });
       setAddOpen(false);
       setForm(emptyForm);
+      setParentSearch("");
+      setParentResults([]);
       fetchSuppliers();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -142,7 +164,10 @@ export default function Suppliers() {
       sector: s.sector || "",
       website_url: s.website_url || "",
       notes: s.notes || "",
+      parent_id: s.parent_id,
     });
+    setParentSearch(s.parent_company_name || "");
+    setParentResults([]);
     setEditOpen(true);
   };
 
@@ -160,12 +185,15 @@ export default function Suppliers() {
         sector: form.sector || null,
         website_url: form.website_url || null,
         notes: form.notes || null,
+        parent_id: form.parent_id || null,
       }).eq("id", editingId);
       if (error) throw error;
       toast({ title: "Supplier updated" });
       setEditOpen(false);
       setEditingId(null);
       setForm(emptyForm);
+      setParentSearch("");
+      setParentResults([]);
       fetchSuppliers();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -204,8 +232,8 @@ export default function Suppliers() {
             </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader><DialogTitle>Add New Supplier</DialogTitle></DialogHeader>
-              <form className="space-y-4" onSubmit={handleAdd}>
-                <div className="grid grid-cols-2 gap-4">
+              <form className="flex flex-col gap-4" onSubmit={handleAdd}>
+                <div className="grid grid-cols-2 gap-4 max-h-[65vh] overflow-y-auto pr-1">
                   <div className="space-y-2 col-span-2">
                     <Label>Company Name</Label>
                     <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" required />
@@ -247,6 +275,37 @@ export default function Suppliers() {
                     <Input value={form.website_url} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://..." type="url" />
                   </div>
                   <div className="space-y-2 col-span-2">
+                    <Label>Parent Company <span className="text-muted-foreground text-xs font-normal">(optional)</span></Label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                      <Input
+                        placeholder="Search for parent company..."
+                        value={parentSearch}
+                        onChange={(e) => { setParentSearch(e.target.value); setParentDropdownOpen(true); if (form.parent_id) setForm({ ...form, parent_id: null }); }}
+                        onFocus={() => setParentDropdownOpen(true)}
+                        onBlur={() => setTimeout(() => setParentDropdownOpen(false), 150)}
+                        className="pl-9 pr-8"
+                      />
+                      {form.parent_id && (
+                        <button type="button" onClick={() => { setForm({ ...form, parent_id: null }); setParentSearch(""); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                      {parentDropdownOpen && parentSearch.trim() && !form.parent_id && parentResults.length > 0 && (
+                        <div className="absolute z-50 top-full mt-1 w-full bg-popover border border-border rounded-lg shadow-lg max-h-48 overflow-auto">
+                          {parentResults.map((r) => (
+                            <button key={r.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-b border-border/50 last:border-0"
+                              onMouseDown={() => { setForm({ ...form, parent_id: r.id }); setParentSearch(r.company_name); setParentDropdownOpen(false); }}>
+                              <p className="font-medium">{r.company_name}</p>
+                              {r.ico && <p className="text-xs text-muted-foreground">IČO: {r.ico}</p>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {form.parent_id && <p className="text-xs text-muted-foreground">Selected: <span className="font-medium">{parentSearch}</span></p>}
+                  </div>
+                  <div className="space-y-2 col-span-2">
                     <Label>Notes</Label>
                     <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Additional notes..." rows={3} />
                   </div>
@@ -272,8 +331,8 @@ export default function Suppliers() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Edit Supplier</DialogTitle></DialogHeader>
-          <form className="space-y-4" onSubmit={handleEdit}>
-            <div className="grid grid-cols-2 gap-4">
+          <form className="flex flex-col gap-4" onSubmit={handleEdit}>
+            <div className="grid grid-cols-2 gap-4 max-h-[65vh] overflow-y-auto pr-1">
               <div className="space-y-2 col-span-2">
                 <Label>Company Name</Label>
                 <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" required />
@@ -315,6 +374,37 @@ export default function Suppliers() {
                 <Input value={form.website_url} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://..." type="url" />
               </div>
               <div className="space-y-2 col-span-2">
+                <Label>Parent Company <span className="text-muted-foreground text-xs font-normal">(optional)</span></Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder="Search for parent company..."
+                    value={parentSearch}
+                    onChange={(e) => { setParentSearch(e.target.value); setParentDropdownOpen(true); if (form.parent_id) setForm({ ...form, parent_id: null }); }}
+                    onFocus={() => setParentDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setParentDropdownOpen(false), 150)}
+                    className="pl-9 pr-8"
+                  />
+                  {form.parent_id && (
+                    <button type="button" onClick={() => { setForm({ ...form, parent_id: null }); setParentSearch(""); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                  {parentDropdownOpen && parentSearch.trim() && !form.parent_id && parentResults.length > 0 && (
+                    <div className="absolute z-50 top-full mt-1 w-full bg-popover border border-border rounded-lg shadow-lg max-h-48 overflow-auto">
+                      {parentResults.filter((r) => r.id !== editingId).map((r) => (
+                        <button key={r.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-b border-border/50 last:border-0"
+                          onMouseDown={() => { setForm({ ...form, parent_id: r.id }); setParentSearch(r.company_name); setParentDropdownOpen(false); }}>
+                          <p className="font-medium">{r.company_name}</p>
+                          {r.ico && <p className="text-xs text-muted-foreground">IČO: {r.ico}</p>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {form.parent_id && <p className="text-xs text-muted-foreground">Selected: <span className="font-medium">{parentSearch}</span></p>}
+              </div>
+              <div className="space-y-2 col-span-2">
                 <Label>Notes</Label>
                 <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Additional notes..." rows={3} />
               </div>
@@ -353,6 +443,7 @@ export default function Suppliers() {
                   <th className="text-left p-4 font-medium">IČO</th>
                   <th className="text-left p-4 font-medium">Country</th>
                   <th className="text-left p-4 font-medium">Sector</th>
+                  <th className="text-left p-4 font-medium">Parent / Subs</th>
                   <th className="text-left p-4 font-medium">Last Evaluated</th>
                   <th className="text-left p-4 font-medium">Evals</th>
                   {canEdit && <th className="text-right p-4 font-medium">Actions</th>}
@@ -366,6 +457,7 @@ export default function Suppliers() {
                       <td className="p-4"><Skeleton className="h-4 w-20" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-8" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-16" /></td>
+                      <td className="p-4"><Skeleton className="h-4 w-24" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-20" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-8" /></td>
                       {canEdit && <td className="p-4"><Skeleton className="h-4 w-16 ml-auto" /></td>}
@@ -373,7 +465,7 @@ export default function Suppliers() {
                   ))
                 ) : suppliers.length === 0 ? (
                   <tr>
-                    <td colSpan={canEdit ? 7 : 6} className="p-12 text-center">
+                    <td colSpan={canEdit ? 8 : 7} className="p-12 text-center">
                       <Building2 className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
                       <p className="text-muted-foreground">No suppliers found</p>
                     </td>
@@ -385,8 +477,28 @@ export default function Suppliers() {
                       <td className="p-4 text-muted-foreground font-mono text-xs">{s.ico}</td>
                       <td className="p-4">{s.country}</td>
                       <td className="p-4 text-muted-foreground">{s.sector}</td>
+                      <td className="p-4 text-sm">
+                        {s.parent_company_name && (
+                          <div className="text-xs">
+                            <span className="text-muted-foreground/70">Parent: </span>
+                            <button className="text-accent hover:underline truncate max-w-[140px] inline-block align-bottom" title={s.parent_company_name}
+                              onClick={() => setSearch(s.parent_company_name!)}>
+                              {s.parent_company_name}
+                            </button>
+                          </div>
+                        )}
+                        {s.subsidiary_count > 0 && (
+                          <div className="text-xs">
+                            <button className="text-muted-foreground hover:text-accent hover:underline"
+                              onClick={() => setSearch(s.company_name)}>
+                              {s.subsidiary_count} {s.subsidiary_count === 1 ? "subsidiary" : "subsidiaries"}
+                            </button>
+                          </div>
+                        )}
+                        {!s.parent_company_name && s.subsidiary_count === 0 && <span className="text-muted-foreground">—</span>}
+                      </td>
                       <td className="p-4 text-muted-foreground">
-                        {s.last_evaluated ? new Date(s.last_evaluated).toLocaleDateString() : "—"}
+                        {s.last_evaluated_at ? new Date(s.last_evaluated_at).toLocaleDateString() : "—"}
                       </td>
                       <td className="p-4 text-muted-foreground">{s.evaluation_count}</td>
                       {canEdit && (

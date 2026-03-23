@@ -5,6 +5,21 @@ Supplier risk evaluation platform for CETIN a.s. Analysts search for Czech suppl
 
 ---
 
+## Git Repository
+
+**This project has its own dedicated git repo — separate from oh_persrepo:**
+
+```
+https://github.com/OHprog/OH-VSA-APP.git
+```
+
+Local path: `oh_persrepo/OH-VSA-APP/` contains a nested `.git` folder.
+Always `cd OH-VSA-APP` before running git commands — do NOT use the oh_persrepo root git.
+
+To deploy changes: commit and push to `main` in this repo. GitHub Actions handles the rest automatically.
+
+---
+
 ## Deployment
 
 | Component | URL | Hosting |
