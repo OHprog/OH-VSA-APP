@@ -287,9 +287,9 @@ function computeInternationalScore(
   else if (profitMargin >= 0)       profScore = 30;
   else                              profScore = 10;
 
-  if (snapshot?.figures.net_profit !== null && snapshot?.figures.revenue !== null) {
+  if (snapshot != null && snapshot.figures.net_profit !== null && snapshot.figures.revenue !== null) {
     const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
-    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)}) — Source: ${sourceLabel}.`);
+    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot.figures.net_profit)} / revenue ${fmtNumber(snapshot.figures.revenue)}) — Source: ${sourceLabel}.`);
   } else {
     findings.push('Profitability data not available — neutral score applied.');
   }
@@ -428,9 +428,9 @@ function computeFinancialScore(
   else if (profitMargin >= 0)       profScore = 30;
   else                              profScore = 10;
 
-  if (snapshot?.figures.net_profit !== null && snapshot?.figures.revenue !== null) {
+  if (snapshot != null && snapshot.figures.net_profit !== null && snapshot.figures.revenue !== null) {
     const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
-    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)} CZK thousands) — Source: Sbírka listin FY ${snapshot!.fiscal_year}.`);
+    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot.figures.net_profit)} / revenue ${fmtNumber(snapshot.figures.revenue)} CZK thousands) — Source: Sbírka listin FY ${snapshot.fiscal_year}.`);
   } else if (snapshot && !snapshot.data_complete) {
     findings.push('Profitability data not available in public financial statements — neutral score applied.');
   }
@@ -446,7 +446,7 @@ function computeFinancialScore(
   else                              liqScore = 10;
 
   if (currentRatio !== null) {
-    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities) — Source: Sbírka listin FY ${snapshot!.fiscal_year}.`);
+    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities) — Source: Sbírka listin FY ${snapshot?.fiscal_year ?? 'N/A'}.`);
     if (currentRatio < 1.0) findings.push('Current ratio below 1.0 — potential short-term liquidity concern.');
   }
 
@@ -461,7 +461,7 @@ function computeFinancialScore(
   else                              solScore = 5;
 
   if (equityRatio !== null) {
-    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets) — Source: Sbírka listin FY ${snapshot!.fiscal_year}.`);
+    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets) — Source: Sbírka listin FY ${snapshot?.fiscal_year ?? 'N/A'}.`);
     if (equityRatio < 0) findings.push('Negative equity — company liabilities exceed assets.');
   }
 
