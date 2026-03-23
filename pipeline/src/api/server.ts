@@ -191,10 +191,52 @@ function scoreToRiskLevel(score: number | null): string {
 }
 
 // ============================================================
+// Startup recovery — mark stale in-flight evaluations as failed
+// Any evaluation/scrape-run left "running" from a previous process
+// (deployment restart, crash) would be stuck forever without this.
+// ============================================================
+
+async function recoverStaleEvaluations(): Promise<void> {
+  const supabase = getSupabase();
+  // Anything still "running" after 30 minutes is definitely orphaned
+  const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+  const { data: stale, error } = await supabase
+    .from('evaluations')
+    .select('id')
+    .eq('status', 'running')
+    .lt('created_at', cutoff);
+
+  if (error) {
+    log('warn', 'Server', `Startup recovery query failed: ${error.message}`);
+    return;
+  }
+
+  if (!stale || stale.length === 0) return;
+
+  const ids = stale.map((r) => r.id);
+  log('warn', 'Server', `Startup recovery: marking ${ids.length} stale evaluation(s) as failed: ${ids.join(', ')}`);
+
+  await supabase
+    .from('evaluations')
+    .update({ status: 'failed', completed_at: new Date().toISOString() })
+    .in('id', ids);
+
+  await supabase
+    .from('firecrawl_scrape_runs')
+    .update({ status: 'failed', completed_at: new Date().toISOString(), errors: ['Pipeline restarted mid-execution'] })
+    .in('evaluation_id', ids)
+    .eq('status', 'running');
+}
+
+// ============================================================
 // Start server
 // ============================================================
 
 const PORT = Number(process.env.PORT) || 3001;
 app.listen(PORT, () => {
   log('info', 'Server', `Pipeline API listening on port ${PORT}`);
+  recoverStaleEvaluations().catch((err) =>
+    log('error', 'Server', `Startup recovery failed: ${err.message}`)
+  );
 });
