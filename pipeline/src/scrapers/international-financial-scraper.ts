@@ -5,17 +5,20 @@ import type { FinancialSnapshot, FinancialFigures, FinancialRatios } from '../ty
 
 // ============================================================
 // International financial data scraper
-// Three sources tried in order:
+// Four sources, two run in parallel:
 //   1. OpenCorporates  — registration status / company health (all companies)
-//   2. FMP API         — full financials for publicly listed companies
+//   2. FMP API         — full financials for publicly listed companies (API key required)
+//   2b. Yahoo Finance  — financials for listed companies (no key, run in parallel with FMP)
 //   3. Company IR page — FireCrawl + AI extraction (unlisted companies with a website)
 //
+// FMP and Yahoo Finance run concurrently; figures are merged (FMP preferred, Yahoo fills gaps).
 // Never throws — all errors are caught and logged.
-// Returns null only if all three sources fail entirely.
+// Returns null only if all sources fail entirely.
 // ============================================================
 
-const FMP_BASE = process.env.FMP_BASE_URL || 'https://financialmodelingprep.com/api/v3';
-const FMP_KEY  = process.env.FMP_API_KEY || '';
+const FMP_BASE   = process.env.FMP_BASE_URL || 'https://financialmodelingprep.com/api/v3';
+const FMP_KEY    = process.env.FMP_API_KEY || '';
+const YAHOO_BASE = 'https://query1.finance.yahoo.com';
 
 const REQUIRED_FIELDS: (keyof FinancialFigures)[] = [
   'revenue', 'net_profit', 'total_assets',
@@ -37,25 +40,36 @@ export async function scrapeInternationalFinancialData(
   const ocData = await fetchOpenCorporates(companyName, country);
   rawExtraction.opencorporates = ocData;
 
-  // ── Source 2: FMP API (listed companies) ─────────────────
+  // ── Sources 2 + 2b: FMP API and Yahoo Finance (parallel) ─
   let figures: FinancialFigures = emptyFigures();
   let fiscalYear: number = new Date().getFullYear() - 1;
   let sourceUrl: string | null = null;
-  let documentType: string = 'opencorporates_only';
-  let fmpData: Record<string, any> | null = null;
+  const activeSources: string[] = [];
 
-  if (FMP_KEY) {
-    fmpData = await fetchFmpFinancials(companyName);
-    rawExtraction.fmp = fmpData;
+  const [fmpData, yahooData] = await Promise.all([
+    FMP_KEY ? fetchFmpFinancials(companyName) : Promise.resolve(null),
+    fetchYahooFinancials(companyName),
+  ]);
 
-    if (fmpData?.figures) {
-      figures = fmpData.figures;
-      fiscalYear = fmpData.fiscal_year ?? fiscalYear;
-      sourceUrl = fmpData.source_url ?? null;
-      documentType = 'fmp_api';
+  if (!FMP_KEY) log('warn', 'IntlFinancialScraper', 'FMP_API_KEY not set — skipping FMP source');
+
+  rawExtraction.fmp   = fmpData;
+  rawExtraction.yahoo = yahooData;
+
+  // Merge: FMP primary, Yahoo fills any null fields
+  if (fmpData?.figures) {
+    figures    = mergeFigures(figures, fmpData.figures);
+    fiscalYear = fmpData.fiscal_year ?? fiscalYear;
+    sourceUrl  = fmpData.source_url ?? null;
+    activeSources.push('fmp_api');
+  }
+  if (yahooData?.figures) {
+    figures = mergeFigures(figures, yahooData.figures);
+    if (!fiscalYear || fiscalYear === new Date().getFullYear() - 1) {
+      fiscalYear = yahooData.fiscal_year ?? fiscalYear;
     }
-  } else {
-    log('warn', 'IntlFinancialScraper', 'FMP_API_KEY not set — skipping FMP source');
+    if (!sourceUrl) sourceUrl = yahooData.source_url ?? null;
+    activeSources.push('yahoo_finance');
   }
 
   // ── Source 3: IR page via FireCrawl (fallback) ───────────
@@ -69,9 +83,11 @@ export async function scrapeInternationalFinancialData(
     if (irData?.figures) {
       figures = mergeFigures(figures, irData.figures);
       if (!sourceUrl) sourceUrl = irData.source_url ?? null;
-      documentType = 'ir_page';
+      activeSources.push('ir_page');
     }
   }
+
+  const documentType = activeSources.length > 0 ? activeSources.join('+') : 'opencorporates_only';
 
   // If no financial figures at all AND no OpenCorporates data, give up
   if (!ocData && !isAnyFigure(figures)) {
@@ -225,6 +241,74 @@ async function fetchFmpFinancials(
     return { figures, fiscal_year, source_url };
   } catch (err: any) {
     log('error', 'IntlFinancialScraper', `FMP fetch failed: ${err.message}`);
+    return null;
+  }
+}
+
+// ── Source 2b: Yahoo Finance (unofficial API, no key needed) ─
+
+async function fetchYahooFinancials(
+  companyName: string
+): Promise<{ figures: FinancialFigures; fiscal_year: number; source_url: string | null } | null> {
+  try {
+    // Step 1: Find ticker
+    const searchRes = await fetch(
+      `${YAHOO_BASE}/v1/finance/search?q=${encodeURIComponent(companyName)}&quotesCount=1&newsCount=0&listsCount=0`,
+      { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' } }
+    );
+    if (!searchRes.ok) {
+      log('warn', 'IntlFinancialScraper', `Yahoo Finance search returned ${searchRes.status}`);
+      return null;
+    }
+
+    const searchData = await searchRes.json() as any;
+    const quote = (searchData?.quotes ?? []).find((q: any) => q.quoteType === 'EQUITY');
+    if (!quote?.symbol) {
+      log('info', 'IntlFinancialScraper', `Yahoo Finance: no equity ticker found for "${companyName}"`);
+      return null;
+    }
+
+    const ticker = quote.symbol as string;
+    log('info', 'IntlFinancialScraper', `Yahoo Finance: found ticker ${ticker} for "${companyName}"`);
+
+    // Step 2: Fetch income statement + balance sheet in one call
+    const summaryRes = await fetch(
+      `${YAHOO_BASE}/v10/finance/quoteSummary/${ticker}?modules=incomeStatementHistory,balanceSheetHistory`,
+      { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' } }
+    );
+    if (!summaryRes.ok) {
+      log('warn', 'IntlFinancialScraper', `Yahoo Finance quoteSummary returned ${summaryRes.status} for ${ticker}`);
+      return null;
+    }
+
+    const summaryData = await summaryRes.json() as any;
+    const result = summaryData?.quoteSummary?.result?.[0];
+    if (!result) return null;
+
+    const income  = result.incomeStatementHistory?.incomeStatementHistory?.[0];
+    const balance = result.balanceSheetHistory?.balanceSheetStatements?.[0];
+
+    if (!income && !balance) return null;
+
+    const figures: FinancialFigures = {
+      revenue:             income?.totalRevenue?.raw ?? null,
+      operating_profit:    income?.ebit?.raw ?? income?.operatingIncome?.raw ?? null,
+      net_profit:          income?.netIncome?.raw ?? null,
+      total_assets:        balance?.totalAssets?.raw ?? null,
+      equity:              balance?.totalStockholderEquity?.raw ?? null,
+      total_liabilities:   balance?.totalLiab?.raw ?? null,
+      current_assets:      balance?.totalCurrentAssets?.raw ?? null,
+      current_liabilities: balance?.totalCurrentLiabilities?.raw ?? null,
+    };
+
+    const endDate: string | undefined = income?.endDate?.fmt ?? balance?.endDate?.fmt;
+    const fiscal_year = endDate ? parseInt(endDate.slice(0, 4), 10) : new Date().getFullYear() - 1;
+    const source_url = `https://finance.yahoo.com/quote/${ticker}/financials`;
+
+    log('info', 'IntlFinancialScraper', `Yahoo Finance: got financials for ${ticker} (FY ${fiscal_year})`);
+    return { figures, fiscal_year, source_url };
+  } catch (err: any) {
+    log('error', 'IntlFinancialScraper', `Yahoo Finance fetch failed: ${err.message}`);
     return null;
   }
 }

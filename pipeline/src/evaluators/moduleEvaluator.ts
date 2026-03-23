@@ -266,6 +266,17 @@ function computeInternationalScore(
 
   const ocData = (snapshot?.raw_extraction?.opencorporates ?? null) as OpenCorporatesResult | null;
 
+  // Human-readable label for the financial data source(s)
+  const docType = snapshot?.document_type ?? '';
+  const sourceLabel = docType
+    ? docType
+        .replace('fmp_api',       'Financial Modeling Prep')
+        .replace('yahoo_finance', 'Yahoo Finance')
+        .replace('ir_page',       'IR page (scraped)')
+        .replace('opencorporates_only', 'OpenCorporates')
+        .replace(/\+/g, ' + ')
+    : 'unknown';
+
   // ── Component 1: Profitability (profit_margin) ────────────────
   const profitMargin = snapshot?.ratios.profit_margin ?? null;
   let profScore: number;
@@ -278,7 +289,7 @@ function computeInternationalScore(
 
   if (snapshot?.figures.net_profit !== null && snapshot?.figures.revenue !== null) {
     const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
-    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)}).`);
+    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)}) — Source: ${sourceLabel}.`);
   } else {
     findings.push('Profitability data not available — neutral score applied.');
   }
@@ -294,7 +305,7 @@ function computeInternationalScore(
   else                              liqScore = 10;
 
   if (currentRatio !== null) {
-    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities).`);
+    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities) — Source: ${sourceLabel}.`);
     if (currentRatio < 1.0) findings.push('Current ratio below 1.0 — potential short-term liquidity concern.');
   }
 
@@ -309,7 +320,7 @@ function computeInternationalScore(
   else                              solScore = 5;
 
   if (equityRatio !== null) {
-    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets).`);
+    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets) — Source: ${sourceLabel}.`);
     if (equityRatio < 0) findings.push('Negative equity — company liabilities exceed assets.');
   }
 
@@ -322,15 +333,15 @@ function computeInternationalScore(
     sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' });
   } else if (ocData.status === 'dissolved') {
     healthScore = 10;
-    findings.push('Company has been dissolved or struck off — critical financial risk.');
+    findings.push('Company has been dissolved or struck off — critical financial risk. (Source: OpenCorporates)');
   } else if (ocData.status === 'inactive') {
     healthScore = 20;
-    findings.push('Company is inactive per OpenCorporates registry.');
+    findings.push('Company is inactive per OpenCorporates registry. (Source: OpenCorporates)');
   } else {
     const yearsOld = ocData.years_old;
     if (ocData.status === 'unknown') {
       healthScore = 40;
-      findings.push('Company registration status unclear in OpenCorporates.');
+      findings.push('Company registration status unclear. (Source: OpenCorporates)');
     } else if (yearsOld === null)  healthScore = 65;
     else if (yearsOld >= 10)       healthScore = 100;
     else if (yearsOld >= 5)        healthScore = 80;
@@ -338,27 +349,34 @@ function computeInternationalScore(
     else                           healthScore = 50;
 
     if (ocData.status === 'active') {
-      findings.push(`Company is actively registered${ocData.jurisdiction ? ` in ${ocData.jurisdiction.toUpperCase()}` : ''}.`);
+      findings.push(`Company is actively registered${ocData.jurisdiction ? ` in ${ocData.jurisdiction.toUpperCase()}` : ''}. (Source: OpenCorporates)`);
     }
     if (ocData.incorporation_date) {
-      findings.push(`Incorporated: ${ocData.incorporation_date.slice(0, 10)}${ocData.years_old !== null ? ` (${ocData.years_old} years)` : ''}.`);
+      findings.push(`Incorporated: ${ocData.incorporation_date.slice(0, 10)}${ocData.years_old !== null ? ` (${ocData.years_old} years)` : ''}. (Source: OpenCorporates)`);
     }
     if (ocData.company_type) {
-      findings.push(`Legal form: ${ocData.company_type}.`);
+      findings.push(`Legal form: ${ocData.company_type}. (Source: OpenCorporates)`);
     }
     sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – Company Registry' });
   }
 
+  // Cross-source comparison note when both FMP and Yahoo returned data
+  const hasFmp   = !!(snapshot?.raw_extraction?.fmp?.figures);
+  const hasYahoo = !!(snapshot?.raw_extraction?.yahoo?.figures);
+  if (hasFmp && hasYahoo) {
+    findings.push('Financial figures cross-referenced from Financial Modeling Prep and Yahoo Finance — merged for completeness.');
+  }
+
   if (snapshot?.source_url) {
-    sources.push({ url: snapshot.source_url, title: `Financial data (${snapshot.document_type ?? 'external'}) FY ${snapshot.fiscal_year}` });
+    sources.push({ url: snapshot.source_url, title: `Financial data — ${sourceLabel} (FY ${snapshot.fiscal_year})` });
   }
 
   if (!snapshot) {
     findings.push('No financial data retrieved from any source — neutral scores applied to all financial components.');
   } else if (!snapshot.data_complete) {
-    findings.push(`Partial financial data (source: ${snapshot.document_type ?? 'unknown'}) — some ratios could not be computed.`);
+    findings.push(`Partial financial data (${sourceLabel}) — some ratios could not be computed.`);
   } else {
-    findings.push(`Complete financial data from fiscal year ${snapshot.fiscal_year} (source: ${snapshot.document_type ?? 'unknown'}).`);
+    findings.push(`Complete financial data from fiscal year ${snapshot.fiscal_year} — ${sourceLabel}.`);
   }
 
   const score = clamp(
@@ -412,7 +430,7 @@ function computeFinancialScore(
 
   if (snapshot?.figures.net_profit !== null && snapshot?.figures.revenue !== null) {
     const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
-    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)} CZK thousands).`);
+    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)} CZK thousands) — Source: Sbírka listin FY ${snapshot!.fiscal_year}.`);
   } else if (snapshot && !snapshot.data_complete) {
     findings.push('Profitability data not available in public financial statements — neutral score applied.');
   }
@@ -428,7 +446,7 @@ function computeFinancialScore(
   else                              liqScore = 10;
 
   if (currentRatio !== null) {
-    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities).`);
+    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities) — Source: Sbírka listin FY ${snapshot!.fiscal_year}.`);
     if (currentRatio < 1.0) findings.push('Current ratio below 1.0 — potential short-term liquidity concern.');
   }
 
@@ -443,7 +461,7 @@ function computeFinancialScore(
   else                              solScore = 5;
 
   if (equityRatio !== null) {
-    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets).`);
+    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets) — Source: Sbírka listin FY ${snapshot!.fiscal_year}.`);
     if (equityRatio < 0) findings.push('Negative equity — company liabilities exceed assets.');
   }
 
@@ -467,9 +485,9 @@ function computeFinancialScore(
     else if (yearsOld >= 2)         healthScore = 65;
     else                            healthScore = 50;
 
-    findings.push(`Company is actively registered: ${ares.company_name}.`);
+    findings.push(`Company is actively registered: ${ares.company_name}. (Source: ARES Czech Business Register)`);
     if (yearsOld !== null) {
-      findings.push(`Registered since ${ares.registration_date.slice(0, 10)} (${Math.floor(yearsOld)} years).`);
+      findings.push(`Registered since ${ares.registration_date.slice(0, 10)} (${Math.floor(yearsOld)} years). (Source: ARES)`);
     }
   }
 
