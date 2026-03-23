@@ -5,6 +5,8 @@ import { checkInsolvency } from '../scrapers/insolvency';
 import { checkEnergyLicenses } from '../scrapers/energy';
 import { scrapeNewsForSupplier } from '../scrapers/firecrawl-scraper';
 import { scrapeFinancialData } from '../scrapers/financial-scraper';
+import { scrapeInternationalFinancialData } from '../scrapers/international-financial-scraper';
+import type { OpenCorporatesResult } from '../scrapers/international-financial-scraper';
 import { getFinancialSnapshot, saveFinancialSnapshot, linkEvaluationToSnapshot } from '../utils/financial-storage';
 import type { AresCompanyData, InsolvencyRecord, EnergyLicenseData, ScrapedArticle, FinancialSnapshot } from '../types';
 
@@ -30,6 +32,8 @@ export async function runModule(
   moduleType: string,
   ico: string,
   companyName: string,
+  country: string = '',
+  websiteUrl: string = '',
   prefetchedArticles: ScrapedArticle[] = []
 ): Promise<void> {
   const supabase = getSupabase();
@@ -48,7 +52,7 @@ export async function runModule(
 
     switch (moduleType) {
       case 'financial':
-        result = await evaluateFinancial(evaluationId, ico, companyName);
+        result = await evaluateFinancial(evaluationId, ico, companyName, country, websiteUrl);
         break;
       case 'compliance':
         result = await evaluateCompliance(ico, companyName);
@@ -115,24 +119,13 @@ export async function runModule(
 async function evaluateFinancial(
   evaluationId: string,
   ico: string,
-  companyName: string
+  companyName: string,
+  country: string = '',
+  websiteUrl: string = ''
 ): Promise<ModuleResult> {
-  // Non-Czech companies have no IČO — skip ARES, return neutral assessment
+  // Non-Czech companies have no IČO — use dedicated international data sources
   if (!ico) {
-    return {
-      score: 60,
-      risk_level: 'medium',
-      summary: `Financial Health for ${companyName}: score 60/100 (medium risk). No Czech IČO — ARES registry not applicable for international companies.`,
-      findings: [
-        `${companyName} is not registered in the Czech Republic — Czech ARES registry does not apply.`,
-        'For international companies, financial health assessment should be supplemented with data from OpenCorporates, Dun & Bradstreet, or local business registries.',
-        'Manual review of publicly available financial statements is recommended.',
-      ],
-      sources: [
-        { url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' },
-      ],
-      raw_data: { international: true },
-    };
+    return evaluateFinancialInternational(evaluationId, companyName, country, websiteUrl);
   }
 
   const ares = await lookupCompanyByICO(ico);
@@ -194,6 +187,193 @@ async function evaluateFinancial(
       ares,
     },
   };
+}
+
+// ============================================================
+// International financial evaluation
+// Uses OpenCorporates + FMP API + IR page (see international-financial-scraper.ts)
+// Same snapshot-based determinism as the Czech path.
+// ============================================================
+
+async function evaluateFinancialInternational(
+  evaluationId: string,
+  companyName: string,
+  country: string,
+  websiteUrl: string
+): Promise<ModuleResult> {
+  // Cache check using synthetic INT_ key
+  let snapshot: FinancialSnapshot | null = await getFinancialSnapshot('', 90, companyName);
+
+  if (!snapshot) {
+    log('info', 'Evaluator', `No cached snapshot for international company "${companyName}" — scraping`);
+    snapshot = await scrapeInternationalFinancialData(companyName, country, websiteUrl || null);
+
+    if (snapshot) {
+      const snapshotId = await saveFinancialSnapshot(snapshot);
+      if (snapshotId) {
+        snapshot = { ...snapshot, id: snapshotId };
+      }
+    }
+  } else {
+    log('info', 'Evaluator', `Using cached financial snapshot for "${companyName}" (fiscal year ${snapshot.fiscal_year})`);
+  }
+
+  if (snapshot?.id) {
+    await linkEvaluationToSnapshot(evaluationId, snapshot.id);
+  }
+
+  const { score, scoreBreakdown, findings, sources } = computeInternationalScore(snapshot, companyName, country);
+
+  return {
+    score,
+    risk_level: scoreToRisk(score),
+    summary: buildSummary('Financial Health', score, companyName,
+      snapshot?.data_complete
+        ? `fiscal year ${snapshot.fiscal_year} international financial data`
+        : snapshot ? 'registration data only' : 'no data available'),
+    findings,
+    sources,
+    raw_data: {
+      international:   true,
+      snapshot_id:     snapshot?.id ?? null,
+      fiscal_year:     snapshot?.fiscal_year ?? null,
+      data_complete:   snapshot?.data_complete ?? false,
+      source_url:      snapshot?.source_url ?? null,
+      figures:         snapshot?.figures ?? null,
+      ratios:          snapshot?.ratios ?? null,
+      score_breakdown: scoreBreakdown,
+      fallback_mode:   !snapshot,
+    },
+  };
+}
+
+/**
+ * Score an international company using OpenCorporates registration data + financial ratios.
+ * Same 4-component weighted formula as Czech path; company health uses OpenCorporates instead of ARES.
+ */
+function computeInternationalScore(
+  snapshot: FinancialSnapshot | null,
+  companyName: string,
+  country: string
+): {
+  score: number;
+  scoreBreakdown: Record<string, any>;
+  findings: string[];
+  sources: { url: string; title: string }[];
+} {
+  const findings: string[] = [];
+  const sources: { url: string; title: string }[] = [];
+
+  const ocData = (snapshot?.raw_extraction?.opencorporates ?? null) as OpenCorporatesResult | null;
+
+  // ── Component 1: Profitability (profit_margin) ────────────────
+  const profitMargin = snapshot?.ratios.profit_margin ?? null;
+  let profScore: number;
+  if (profitMargin === null)        profScore = 50;
+  else if (profitMargin >= 0.10)    profScore = 100;
+  else if (profitMargin >= 0.05)    profScore = 75;
+  else if (profitMargin >= 0.01)    profScore = 50;
+  else if (profitMargin >= 0)       profScore = 30;
+  else                              profScore = 10;
+
+  if (snapshot?.figures.net_profit !== null && snapshot?.figures.revenue !== null) {
+    const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
+    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot!.figures.net_profit)} / revenue ${fmtNumber(snapshot!.figures.revenue)}).`);
+  } else {
+    findings.push('Profitability data not available — neutral score applied.');
+  }
+
+  // ── Component 2: Liquidity (current_ratio) ───────────────────
+  const currentRatio = snapshot?.ratios.current_ratio ?? null;
+  let liqScore: number;
+  if (currentRatio === null)        liqScore = 50;
+  else if (currentRatio >= 2.0)     liqScore = 100;
+  else if (currentRatio >= 1.5)     liqScore = 80;
+  else if (currentRatio >= 1.0)     liqScore = 55;
+  else if (currentRatio >= 0.5)     liqScore = 30;
+  else                              liqScore = 10;
+
+  if (currentRatio !== null) {
+    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities).`);
+    if (currentRatio < 1.0) findings.push('Current ratio below 1.0 — potential short-term liquidity concern.');
+  }
+
+  // ── Component 3: Solvency (equity_ratio) ─────────────────────
+  const equityRatio = snapshot?.ratios.equity_ratio ?? null;
+  let solScore: number;
+  if (equityRatio === null)         solScore = 50;
+  else if (equityRatio >= 0.50)     solScore = 100;
+  else if (equityRatio >= 0.30)     solScore = 75;
+  else if (equityRatio >= 0.10)     solScore = 50;
+  else if (equityRatio >= 0.00)     solScore = 30;
+  else                              solScore = 5;
+
+  if (equityRatio !== null) {
+    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets).`);
+    if (equityRatio < 0) findings.push('Negative equity — company liabilities exceed assets.');
+  }
+
+  // ── Component 4: Company health (OpenCorporates) ─────────────
+  let healthScore: number;
+  if (!ocData) {
+    healthScore = 40;
+    findings.push(`Company registration status unknown — OpenCorporates returned no data.`);
+    findings.push(`Verify ${companyName} in the national business registry${country ? ` (${country.toUpperCase()})` : ''}.`);
+    sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' });
+  } else if (ocData.status === 'dissolved') {
+    healthScore = 10;
+    findings.push('Company has been dissolved or struck off — critical financial risk.');
+  } else if (ocData.status === 'inactive') {
+    healthScore = 20;
+    findings.push('Company is inactive per OpenCorporates registry.');
+  } else {
+    const yearsOld = ocData.years_old;
+    if (ocData.status === 'unknown') {
+      healthScore = 40;
+      findings.push('Company registration status unclear in OpenCorporates.');
+    } else if (yearsOld === null)  healthScore = 65;
+    else if (yearsOld >= 10)       healthScore = 100;
+    else if (yearsOld >= 5)        healthScore = 80;
+    else if (yearsOld >= 2)        healthScore = 65;
+    else                           healthScore = 50;
+
+    if (ocData.status === 'active') {
+      findings.push(`Company is actively registered${ocData.jurisdiction ? ` in ${ocData.jurisdiction.toUpperCase()}` : ''}.`);
+    }
+    if (ocData.incorporation_date) {
+      findings.push(`Incorporated: ${ocData.incorporation_date.slice(0, 10)}${ocData.years_old !== null ? ` (${ocData.years_old} years)` : ''}.`);
+    }
+    if (ocData.company_type) {
+      findings.push(`Legal form: ${ocData.company_type}.`);
+    }
+    sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – Company Registry' });
+  }
+
+  if (snapshot?.source_url) {
+    sources.push({ url: snapshot.source_url, title: `Financial data (${snapshot.document_type ?? 'external'}) FY ${snapshot.fiscal_year}` });
+  }
+
+  if (!snapshot) {
+    findings.push('No financial data retrieved from any source — neutral scores applied to all financial components.');
+  } else if (!snapshot.data_complete) {
+    findings.push(`Partial financial data (source: ${snapshot.document_type ?? 'unknown'}) — some ratios could not be computed.`);
+  } else {
+    findings.push(`Complete financial data from fiscal year ${snapshot.fiscal_year} (source: ${snapshot.document_type ?? 'unknown'}).`);
+  }
+
+  const score = clamp(
+    Math.round(profScore * 0.30 + liqScore * 0.25 + solScore * 0.20 + healthScore * 0.25),
+    0, 100
+  );
+
+  const scoreBreakdown = {
+    profitability:  { score: profScore,   weight: 0.30, value: profitMargin },
+    liquidity:      { score: liqScore,    weight: 0.25, value: currentRatio },
+    solvency:       { score: solScore,    weight: 0.20, value: equityRatio },
+    company_health: { score: healthScore, weight: 0.25, oc_status: ocData?.status ?? null, years_old: ocData?.years_old ?? null },
+  };
+
+  return { score, scoreBreakdown, findings, sources };
 }
 
 /**

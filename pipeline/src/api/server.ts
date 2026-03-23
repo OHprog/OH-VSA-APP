@@ -48,10 +48,12 @@ app.get('/health', (_req, res) => {
 // ============================================================
 
 app.post('/evaluate', async (req, res) => {
-  const { evaluation_id, ico, company_name, modules } = req.body as {
+  const { evaluation_id, ico, company_name, country, website_url, modules } = req.body as {
     evaluation_id: string;
     ico: string;
     company_name: string;
+    country?: string;
+    website_url?: string;
     modules: string[];
   };
 
@@ -61,13 +63,13 @@ app.post('/evaluate', async (req, res) => {
     });
   }
 
-  log('info', 'API', `Starting evaluation ${evaluation_id} for ${company_name} (${ico}), modules: ${modules.join(', ')}`);
+  log('info', 'API', `Starting evaluation ${evaluation_id} for ${company_name} (${ico || 'international'}), modules: ${modules.join(', ')}`);
 
   // Respond immediately — the pipeline runs in the background
   res.json({ ok: true, evaluation_id, message: 'Evaluation started' });
 
   // Run the full pipeline asynchronously
-  runEvaluationPipeline(evaluation_id, ico, company_name, modules).catch((err) => {
+  runEvaluationPipeline(evaluation_id, ico, company_name, country ?? '', website_url ?? '', modules).catch((err) => {
     log('error', 'API', `Unhandled pipeline error for ${evaluation_id}: ${err.message}`);
   });
 });
@@ -80,6 +82,8 @@ async function runEvaluationPipeline(
   evaluationId: string,
   ico: string,
   companyName: string,
+  country: string,
+  websiteUrl: string,
   modules: string[]
 ): Promise<void> {
   const supabase = getSupabase();
@@ -127,7 +131,7 @@ async function runEvaluationPipeline(
     // Run all requested modules in parallel, passing pre-fetched articles
     const results = await Promise.allSettled(
       modules.map((moduleType) =>
-        runModule(evaluationId, moduleType, ico, companyName, prefetchedArticles)
+        runModule(evaluationId, moduleType, ico, companyName, country, websiteUrl, prefetchedArticles)
       )
     );
 

@@ -3,6 +3,18 @@ import { log } from './helpers';
 import type { FinancialSnapshot, FinancialFigures, FinancialRatios } from '../types';
 
 // ============================================================
+// Cache key helper
+// Czech companies: use IČO directly.
+// International companies (no IČO): use a synthetic key so snapshots
+// are still cached and reused between evaluations of the same company.
+// ============================================================
+
+export function financialCacheKey(ico: string, companyName: string): string {
+  if (ico) return ico;
+  return 'INT_' + companyName.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 50);
+}
+
+// ============================================================
 // Financial snapshot persistence
 // Follows the same pattern as supabase-storage.ts:
 //   - getSupabase() client
@@ -18,15 +30,17 @@ import type { FinancialSnapshot, FinancialFigures, FinancialRatios } from '../ty
  */
 export async function getFinancialSnapshot(
   ico: string,
-  maxAgeDays: number = 90
+  maxAgeDays: number = 90,
+  companyName: string = ''
 ): Promise<FinancialSnapshot | null> {
   const supabase = getSupabase();
   const cutoff = new Date(Date.now() - maxAgeDays * 86400 * 1000).toISOString();
+  const cacheKey = financialCacheKey(ico, companyName);
 
   const { data, error } = await supabase
     .from('supplier_financial_snapshots')
     .select('*')
-    .eq('supplier_ico', ico)
+    .eq('supplier_ico', cacheKey)
     .gte('scraped_at', cutoff)
     .order('fiscal_year', { ascending: false })
     .order('scraped_at', { ascending: false })
@@ -34,7 +48,7 @@ export async function getFinancialSnapshot(
     .maybeSingle();
 
   if (error) {
-    log('error', 'FinancialStorage', `Failed to look up snapshot for ${ico}: ${error.message}`);
+    log('error', 'FinancialStorage', `Failed to look up snapshot for ${cacheKey}: ${error.message}`);
     return null;
   }
 
@@ -51,6 +65,8 @@ export async function getFinancialSnapshot(
 export async function saveFinancialSnapshot(snapshot: FinancialSnapshot): Promise<string> {
   const supabase = getSupabase();
   const row = snapshotToDbRow(snapshot);
+  // Ensure the cache key is used as supplier_ico (handles international companies)
+  row.supplier_ico = financialCacheKey(snapshot.supplier_ico, snapshot.company_name);
 
   const { data, error } = await supabase
     .from('supplier_financial_snapshots')

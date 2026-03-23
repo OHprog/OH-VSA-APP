@@ -58,7 +58,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: supplier, error: supplierError } = await supabase
     .from('suppliers')
-    .select('ico, company_name')
+    .select('ico, company_name, country, website_url')
     .eq('id', supplierId)
     .single();
 
@@ -79,7 +79,7 @@ Deno.serve(async (req: Request) => {
 
   const moduleTypes = (modules ?? []).map((m: { module_type: string }) => m.module_type);
 
-  console.log(`[run-evaluation] Calling pipeline for ${supplier.company_name} (${supplier.ico}), modules: ${moduleTypes.join(', ')}`);
+  console.log(`[run-evaluation] Calling pipeline for ${supplier.company_name} (${supplier.ico || 'international'}), modules: ${moduleTypes.join(', ')}`);
 
   // Call the pipeline API
   try {
@@ -90,6 +90,8 @@ Deno.serve(async (req: Request) => {
         evaluation_id: evaluationId,
         ico: supplier.ico,
         company_name: supplier.company_name,
+        country: supplier.country ?? '',
+        website_url: supplier.website_url ?? '',
         modules: moduleTypes,
       }),
       // Allow up to 10 seconds for the pipeline to acknowledge

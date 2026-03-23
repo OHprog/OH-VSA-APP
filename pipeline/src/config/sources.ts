@@ -228,6 +228,15 @@ export const INTERNATIONAL_NEWS_SOURCES: ScraperConfig[] = [
 ];
 
 // ============================================================
+// International registries
+// ============================================================
+
+export const OPENCORPORATES_CONFIG = {
+  search_url: (name: string, country?: string) =>
+    `https://api.opencorporates.com/v0.4/companies/search?q=${encodeURIComponent(name)}${country ? `&jurisdiction_code=${country.toLowerCase()}` : ''}&format=json`,
+};
+
+// ============================================================
 // All sources combined
 // ============================================================
 
