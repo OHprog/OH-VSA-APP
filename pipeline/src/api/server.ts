@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { runModule } from '../evaluators/moduleEvaluator';
-import { getSupabase } from '../utils/clients';
+import { getSupabase, getAIML } from '../utils/clients';
 import { log } from '../utils/helpers';
 import { scrapeNewsForSupplier } from '../scrapers/firecrawl-scraper';
 import { INTERNATIONAL_NEWS_SOURCES } from '../config/sources';
