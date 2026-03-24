@@ -210,10 +210,10 @@ export default function Dashboard() {
 
   const riskDistribution = stats
     ? [
-        { name: "Low", value: stats.low_risk_count, fill: "#22c55e" },
-        { name: "Medium", value: stats.medium_risk_count, fill: "#eab308" },
-        { name: "High", value: stats.high_risk_count, fill: "#f97316" },
-        { name: "Critical", value: stats.critical_risk_count, fill: "#ef4444" },
+        { name: "Low",      value: stats.low_risk_count,      fill: "#22c55e", gradId: "gradPieLow"      },
+        { name: "Medium",   value: stats.medium_risk_count,   fill: "#eab308", gradId: "gradPieMedium"   },
+        { name: "High",     value: stats.high_risk_count,     fill: "#f97316", gradId: "gradPieHigh"     },
+        { name: "Critical", value: stats.critical_risk_count, fill: "#ef4444", gradId: "gradPieCritical" },
       ].filter((r) => r.value > 0)
     : [];
 
@@ -382,18 +382,27 @@ export default function Dashboard() {
                 <div className="relative">
                   <ResponsiveContainer width="100%" height={180}>
                     <PieChart>
+                      <defs>
+                        {riskDistribution.map((r) => (
+                          <linearGradient key={r.gradId} id={r.gradId} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%"   stopColor={r.fill} stopOpacity={0.95} />
+                            <stop offset="100%" stopColor={r.fill} stopOpacity={0.4}  />
+                          </linearGradient>
+                        ))}
+                      </defs>
                       <Pie
                         data={riskDistribution}
                         cx="50%"
                         cy="50%"
                         innerRadius={58}
                         outerRadius={82}
-                        paddingAngle={3}
+                        paddingAngle={4}
                         dataKey="value"
                         strokeWidth={0}
+                        cornerRadius={15}
                       >
                         {riskDistribution.map((entry, i) => (
-                          <Cell key={i} fill={entry.fill} />
+                          <Cell key={i} fill={`url(#${entry.gradId})`} />
                         ))}
                       </Pie>
                       <Tooltip content={<CustomTooltip />} />
@@ -425,77 +434,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Recent Evaluations */}
-      <Card className="gradient-card border-border/50">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-sm font-semibold">Recent Evaluations</CardTitle>
-          {recent.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-muted-foreground hover:text-accent gap-1 -mr-2 h-7"
-              onClick={() => navigate("/evaluations")}
-            >
-              View all <ArrowRight className="h-3 w-3" />
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent className="pt-0">
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full rounded-lg" />
-              ))}
-            </div>
-          ) : recent.length === 0 ? (
-            <div className="py-12 text-center space-y-4">
-              <ClipboardList className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-              <p className="text-muted-foreground text-sm">No evaluations yet. Start your first supplier assessment!</p>
-              <Button onClick={() => navigate("/evaluations/new")} className="bg-accent text-accent-foreground hover:bg-accent/90 gap-2">
-                <Plus className="h-4 w-4" /> New Evaluation
-              </Button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border/60">
-                    {["Supplier", "IČO", "Date", "Status", "Score", "Risk", "Modules"].map((h) => (
-                      <th key={h} className="text-left py-2.5 pr-4 last:pr-0 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {recent.map((ev) => (
-                    <tr
-                      key={ev.id}
-                      className="border-b border-border/40 last:border-0 hover:bg-accent/5 transition-colors cursor-pointer group"
-                      onClick={() => navigate(`/evaluations/${ev.id}`)}
-                    >
-                      <td className="py-3 pr-4 font-medium group-hover:text-accent transition-colors">{ev.company_name}</td>
-                      <td className="py-3 pr-4 text-muted-foreground font-mono text-xs">{ev.ico ?? "—"}</td>
-                      <td className="py-3 pr-4 text-muted-foreground text-xs">{new Date(ev.created_at).toLocaleDateString()}</td>
-                      <td className="py-3 pr-4"><StatusBadge status={ev.status} /></td>
-                      <td className="py-3 pr-4">
-                        {ev.overall_score !== null ? (
-                          <span className={`font-semibold tabular-nums ${scoreColor(ev.overall_score)}`}>{ev.overall_score}</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 pr-4"><RiskBadge level={ev.overall_risk_level} /></td>
-                      <td className="py-3 text-muted-foreground text-xs tabular-nums">{ev.modules_completed}/{ev.module_count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       {/* AI Analyst Chat */}
       <Card className="gradient-card border-border/50">
@@ -600,6 +538,77 @@ export default function Dashboard() {
               <Send className="h-3.5 w-3.5" />
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Recent Evaluations */}
+      <Card className="gradient-card border-border/50">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-sm font-semibold">Recent Evaluations</CardTitle>
+          {recent.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-accent gap-1 -mr-2 h-7"
+              onClick={() => navigate("/evaluations")}
+            >
+              View all <ArrowRight className="h-3 w-3" />
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="pt-0">
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full rounded-lg" />
+              ))}
+            </div>
+          ) : recent.length === 0 ? (
+            <div className="py-12 text-center space-y-4">
+              <ClipboardList className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+              <p className="text-muted-foreground text-sm">No evaluations yet. Start your first supplier assessment!</p>
+              <Button onClick={() => navigate("/evaluations/new")} className="bg-accent text-accent-foreground hover:bg-accent/90 gap-2">
+                <Plus className="h-4 w-4" /> New Evaluation
+              </Button>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/60">
+                    {["Supplier", "IČO", "Date", "Status", "Score", "Risk", "Modules"].map((h) => (
+                      <th key={h} className="text-left py-2.5 pr-4 last:pr-0 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.map((ev) => (
+                    <tr
+                      key={ev.id}
+                      className="border-b border-border/40 last:border-0 hover:bg-accent/5 transition-colors cursor-pointer group"
+                      onClick={() => navigate(`/evaluations/${ev.id}`)}
+                    >
+                      <td className="py-3 pr-4 font-medium group-hover:text-accent transition-colors">{ev.company_name}</td>
+                      <td className="py-3 pr-4 text-muted-foreground font-mono text-xs">{ev.ico ?? "—"}</td>
+                      <td className="py-3 pr-4 text-muted-foreground text-xs">{new Date(ev.created_at).toLocaleDateString()}</td>
+                      <td className="py-3 pr-4"><StatusBadge status={ev.status} /></td>
+                      <td className="py-3 pr-4">
+                        {ev.overall_score !== null ? (
+                          <span className={`font-semibold tabular-nums ${scoreColor(ev.overall_score)}`}>{ev.overall_score}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-4"><RiskBadge level={ev.overall_risk_level} /></td>
+                      <td className="py-3 text-muted-foreground text-xs tabular-nums">{ev.modules_completed}/{ev.module_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
