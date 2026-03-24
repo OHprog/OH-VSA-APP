@@ -234,7 +234,7 @@ export interface OpenCorporatesResult {
   jurisdiction: string | null;
 }
 
-async function fetchOpenCorporates(
+export async function fetchOpenCorporates(
   companyName: string,
   country: string
 ): Promise<OpenCorporatesResult | null> {

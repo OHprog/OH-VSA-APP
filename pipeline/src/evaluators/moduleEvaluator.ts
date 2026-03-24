@@ -1,13 +1,15 @@
-import { getSupabase } from '../utils/clients';
+import { getSupabase, getAIML, getFireCrawl } from '../utils/clients';
 import { log } from '../utils/helpers';
 import { lookupCompanyByICO } from '../scrapers/ares';
 import { checkInsolvency } from '../scrapers/insolvency';
 import { checkEnergyLicenses } from '../scrapers/energy';
 import { scrapeNewsForSupplier } from '../scrapers/firecrawl-scraper';
 import { scrapeFinancialData } from '../scrapers/financial-scraper';
-import { scrapeInternationalFinancialData } from '../scrapers/international-financial-scraper';
+import { scrapeInternationalFinancialData, fetchOpenCorporates } from '../scrapers/international-financial-scraper';
 import type { OpenCorporatesResult } from '../scrapers/international-financial-scraper';
+import { checkSanctionsList } from '../scrapers/sanctions-scraper';
 import { getFinancialSnapshot, saveFinancialSnapshot, linkEvaluationToSnapshot } from '../utils/financial-storage';
+import { generateModuleSummary } from '../utils/ai-summarizer';
 import type { AresCompanyData, InsolvencyRecord, EnergyLicenseData, ScrapedArticle, FinancialSnapshot } from '../types';
 
 // ============================================================
@@ -55,10 +57,10 @@ export async function runModule(
         result = await evaluateFinancial(evaluationId, ico, companyName, country, websiteUrl);
         break;
       case 'compliance':
-        result = await evaluateCompliance(ico, companyName);
+        result = await evaluateCompliance(ico, companyName, country);
         break;
       case 'sanctions':
-        result = await evaluateSanctions(ico, companyName, prefetchedArticles);
+        result = await evaluateSanctions(ico, companyName, country, prefetchedArticles);
         break;
       case 'market':
         result = await evaluateMarket(ico, companyName, prefetchedArticles);
@@ -166,10 +168,12 @@ async function evaluateFinancial(
   // --- Deterministic scoring ---
   const { score, scoreBreakdown, findings, sources } = computeFinancialScore(ares, snapshot);
 
+  const aiSummary = await generateModuleSummary('financial', ares.company_name, score, scoreToRisk(score), findings, false);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Financial Health', score, ares.company_name,
+    summary: aiSummary ?? buildSummary('Financial Health', score, ares.company_name,
       snapshot?.data_complete
         ? `fiscal year ${snapshot.fiscal_year} financial data`
         : 'ARES registry data only'),
@@ -224,10 +228,12 @@ async function evaluateFinancialInternational(
 
   const { score, scoreBreakdown, findings, sources } = computeInternationalScore(snapshot, companyName, country);
 
+  const aiSummary = await generateModuleSummary('financial', companyName, score, scoreToRisk(score), findings, true);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Financial Health', score, companyName,
+    summary: aiSummary ?? buildSummary('Financial Health', score, companyName,
       snapshot?.data_complete
         ? `fiscal year ${snapshot.fiscal_year} international financial data`
         : snapshot ? 'registration data only' : 'no data available'),
@@ -448,7 +454,8 @@ function computeFinancialScore(
 
   if (snapshot != null && snapshot.figures.net_profit !== null && snapshot.figures.revenue !== null) {
     const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
-    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot.figures.net_profit)} / revenue ${fmtNumber(snapshot.figures.revenue)} CZK thousands) — Source: Sbírka listin FY ${snapshot.fiscal_year}.`);
+    const interpretation = profitMargin === null ? '' : profitMargin >= 0.10 ? ' — strong profitability.' : profitMargin >= 0.05 ? ' — healthy margin.' : profitMargin >= 0.01 ? ' — thin margin.' : profitMargin >= 0 ? ' — near breakeven.' : ' — operating at a loss.';
+    findings.push(`Profit margin: ${pct}%${interpretation} (Revenue: ${fmtNumber(snapshot.figures.revenue)} / Net profit: ${fmtNumber(snapshot.figures.net_profit)} CZK thousands, FY ${snapshot.fiscal_year})`);
   } else if (snapshot && !snapshot.data_complete) {
     findings.push('Profitability data not available in public financial statements — neutral score applied.');
   }
@@ -464,8 +471,8 @@ function computeFinancialScore(
   else                              liqScore = 10;
 
   if (currentRatio !== null) {
-    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities) — Source: Sbírka listin FY ${snapshot?.fiscal_year ?? 'N/A'}.`);
-    if (currentRatio < 1.0) findings.push('Current ratio below 1.0 — potential short-term liquidity concern.');
+    const liqNote = currentRatio >= 2.0 ? 'strong liquidity.' : currentRatio >= 1.5 ? 'adequate liquidity.' : currentRatio >= 1.0 ? 'acceptable liquidity.' : 'potential short-term liquidity concern.';
+    findings.push(`Current ratio: ${currentRatio.toFixed(2)} — ${liqNote} (FY ${snapshot?.fiscal_year ?? 'N/A'})`);
   }
 
   // ── Component 3: Solvency (equity_ratio) ─────────────────────────────
@@ -479,8 +486,8 @@ function computeFinancialScore(
   else                              solScore = 5;
 
   if (equityRatio !== null) {
-    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets) — Source: Sbírka listin FY ${snapshot?.fiscal_year ?? 'N/A'}.`);
-    if (equityRatio < 0) findings.push('Negative equity — company liabilities exceed assets.');
+    const solNote = equityRatio >= 0.50 ? 'strong balance sheet.' : equityRatio >= 0.30 ? 'moderate leverage.' : equityRatio >= 0.10 ? 'highly leveraged.' : equityRatio < 0 ? 'liabilities exceed assets — elevated insolvency risk.' : 'very high leverage.';
+    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% — ${solNote} (FY ${snapshot?.fiscal_year ?? 'N/A'})`);
   }
 
   // ── Component 4: Company health (ARES status + age) ──────────────────
@@ -564,27 +571,14 @@ function fmtBigNumber(n: number | null): string {
 
 // ============================================================
 // Module: Compliance & Legal
-// Data sources: ARES (status) + Insolvency Register (ISIR)
+// CZ:  ARES (registration status) + ISIR (insolvency proceedings)
+// Intl: OpenCorporates (registration) + FireCrawl web search for
+//       regulatory violations, fines, court judgments (AI extraction)
 // ============================================================
 
-async function evaluateCompliance(ico: string, companyName: string): Promise<ModuleResult> {
-  // Non-Czech companies — skip ARES and ISIR entirely
+async function evaluateCompliance(ico: string, companyName: string, country: string = ''): Promise<ModuleResult> {
   if (!ico) {
-    return {
-      score: 65,
-      risk_level: 'medium',
-      summary: `Compliance & Legal for ${companyName}: score 65/100 (medium risk). Czech registries (ARES, ISIR) not applicable — international company.`,
-      findings: [
-        `${companyName} has no Czech IČO — ARES (Czech Business Register) and ISIR (Czech Insolvency Register) do not apply.`,
-        'For international compliance verification, consult the relevant national business registry of the country of incorporation.',
-        'Recommended checks: local insolvency registers, sanctions lists (EU, OFAC, UN), court records in the country of origin.',
-      ],
-      sources: [
-        { url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' },
-        { url: 'https://www.sanctionsmap.eu/', title: 'EU Sanctions Map' },
-      ],
-      raw_data: { international: true },
-    };
+    return evaluateComplianceInternational(companyName, country);
   }
 
   const [ares, insolvency] = await Promise.all([
@@ -603,21 +597,25 @@ async function evaluateCompliance(ico: string, companyName: string): Promise<Mod
   if (ares) {
     if (ares.status === 'in_liquidation') {
       score -= 30;
-      findings.push(`⚠️ Company is in liquidation — compliance risk.`);
+      findings.push(`⚠️ Company is in liquidation — contract execution risk.`);
     } else if (ares.status === 'inactive') {
       score -= 20;
-      findings.push(`⚠️ Company is inactive per ARES.`);
+      findings.push(`⚠️ Company is inactive per ARES — may not be legally permitted to operate.`);
     } else {
-      findings.push(`Company is active and properly registered in the Czech Business Register.`);
+      findings.push(`Company is active and properly registered in the Czech Business Register (ARES).`);
+      if (ares.registration_date) {
+        const yearsOld = Math.floor((Date.now() - new Date(ares.registration_date).getTime()) / (1000 * 60 * 60 * 24 * 365));
+        findings.push(`Registered since ${ares.registration_date.slice(0, 10)} — ${yearsOld} years in operation.`);
+      }
     }
   } else {
     score -= 15;
     findings.push(`Company not found in ARES — registration status unknown.`);
   }
 
-  // Insolvency records
+  // Insolvency records — legal impediment to contract execution
   if (insolvency.length === 0) {
-    findings.push('No insolvency records found in the Czech Insolvency Register (ISIR).');
+    findings.push('No insolvency proceedings found in Czech Insolvency Register (ISIR).');
     score += 5;
   } else {
     const active = insolvency.filter((r) => r.status === 'active');
@@ -625,62 +623,251 @@ async function evaluateCompliance(ico: string, companyName: string): Promise<Mod
 
     if (active.length > 0) {
       score -= active.length * 40;
-      findings.push(`🔴 ${active.length} active insolvency proceeding(s): ${active.map((r) => r.case_number).join(', ')}`);
+      findings.push(`🔴 ${active.length} active insolvency proceeding(s): ${active.map((r) => r.case_number).join(', ')} — contracts may be void or unenforceable.`);
     }
     if (resolved.length > 0) {
       score -= resolved.length * 10;
-      findings.push(`Historical insolvency proceedings (resolved): ${resolved.map((r) => r.case_number).join(', ')}`);
+      findings.push(`${resolved.length} resolved insolvency proceeding(s) on record: ${resolved.map((r) => r.case_number).join(', ')}`);
     }
   }
 
   score = clamp(score, 0, 100);
+
+  const aiSummary = await generateModuleSummary('compliance', companyName, score, scoreToRisk(score), findings, false);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Compliance & Legal', score, companyName, insolvency.length === 0 ? 'clean' : 'issues found'),
+    summary: aiSummary ?? buildSummary('Compliance & Legal', score, companyName, insolvency.length === 0 ? 'clean' : 'issues found'),
     findings,
     sources,
     raw_data: { ares, insolvency },
   };
 }
 
+async function evaluateComplianceInternational(companyName: string, country: string): Promise<ModuleResult> {
+  const findings: string[] = [];
+  const sources: { url: string; title: string }[] = [];
+
+  // ── Step 1: OpenCorporates registration check ─────────────
+  const ocData = await fetchOpenCorporates(companyName, country);
+
+  let score = 75;
+
+  if (!ocData) {
+    score = 60;
+    findings.push('Company registration status could not be verified via international registries.');
+    sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' });
+  } else if (ocData.status === 'dissolved') {
+    score = 20;
+    findings.push('🔴 Company has been dissolved or struck off — contracting is not recommended.');
+    sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – Company Registry' });
+  } else if (ocData.status === 'inactive') {
+    score = 50;
+    findings.push('⚠️ Company is currently inactive per OpenCorporates registry — verify ability to contract.');
+    sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – Company Registry' });
+  } else {
+    const yearsOld = ocData.years_old;
+    if (ocData.status === 'unknown') {
+      score = 60;
+      findings.push(`Company found in OpenCorporates but status is unconfirmed${ocData.jurisdiction ? ` (${ocData.jurisdiction.toUpperCase()})` : ''}.`);
+    } else {
+      // active
+      if (yearsOld === null)      score = 70;
+      else if (yearsOld >= 10)    score = 85;
+      else if (yearsOld >= 5)     score = 78;
+      else if (yearsOld >= 2)     score = 72;
+      else                        score = 65;
+
+      findings.push(`Actively registered company${ocData.jurisdiction ? ` (${ocData.jurisdiction.toUpperCase()})` : ''}${yearsOld !== null ? ` — ${yearsOld} years in operation.` : '.'}`);
+    }
+    if (ocData.company_type) findings.push(`Legal form: ${ocData.company_type}.`);
+    if (ocData.incorporation_date) findings.push(`Incorporated: ${ocData.incorporation_date.slice(0, 10)}.`);
+    sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: `${companyName} — OpenCorporates` });
+  }
+
+  // ── Step 2: Web search for regulatory violations / fines ──
+  const complianceWeb = await scrapeComplianceWebIssues(companyName, country);
+
+  if (complianceWeb.violations.length > 0) {
+    const active = complianceWeb.violations.filter((v) => !v.resolved);
+    const resolved = complianceWeb.violations.filter((v) => v.resolved);
+
+    if (active.length > 0) {
+      score -= Math.min(active.length * 15, 30);
+      for (const v of active.slice(0, 3)) {
+        findings.push(`⚠️ ${v.type}${v.year ? ` (${v.year})` : ''}: ${v.description.slice(0, 150)}`);
+      }
+    }
+    if (resolved.length > 0) {
+      score -= Math.min(resolved.length * 5, 15);
+      findings.push(`${resolved.length} resolved compliance issue(s) found in public records.`);
+    }
+    for (const src of complianceWeb.sources) sources.push(src);
+  } else {
+    findings.push('No material compliance violations found in publicly available sources.');
+  }
+
+  score = clamp(score, 0, 100);
+
+  const aiSummary = await generateModuleSummary('compliance', companyName, score, scoreToRisk(score), findings, true);
+
+  return {
+    score,
+    risk_level: scoreToRisk(score),
+    summary: aiSummary ?? buildSummary('Compliance & Legal', score, companyName,
+      complianceWeb.violations.length === 0 ? 'no violations found' : 'compliance issues found'),
+    findings,
+    sources,
+    raw_data: {
+      international: true,
+      opencorporates: ocData,
+      compliance_violations: complianceWeb.violations,
+      recommendations: [
+        'Verify registration in the national business registry of the country of incorporation.',
+        'Review local court records for pending litigation.',
+      ],
+    },
+  };
+}
+
+/**
+ * Use FireCrawl search to find regulatory compliance issues about an international company.
+ * AI extracts structured violation data from the scraped pages.
+ */
+async function scrapeComplianceWebIssues(
+  companyName: string,
+  country: string
+): Promise<{
+  violations: Array<{ type: string; description: string; year: string | null; resolved: boolean }>;
+  sources: Array<{ url: string; title: string }>;
+}> {
+  const violations: Array<{ type: string; description: string; year: string | null; resolved: boolean }> = [];
+  const srcs: Array<{ url: string; title: string }> = [];
+
+  try {
+    const firecrawl = getFireCrawl();
+    const query = `"${companyName}" regulatory fine OR violation OR lawsuit OR court judgment OR license revoked${country ? ` ${country}` : ''}`;
+
+    // FireCrawl search returns pages matching the query
+    const searchResult = await (firecrawl as any).search(query, {
+      limit: 5,
+      scrapeOptions: { formats: ['markdown'] },
+    });
+
+    const docs: any[] = searchResult?.data ?? searchResult?.results ?? [];
+    if (!docs.length) {
+      log('info', 'Evaluator', `Compliance web search: no results for "${companyName}"`);
+      return { violations: [], sources: [] };
+    }
+
+    const aiml = getAIML();
+
+    for (const doc of docs.slice(0, 5)) {
+      const content = (doc.markdown ?? doc.description ?? '').slice(0, 5000);
+      if (!content.trim()) continue;
+
+      try {
+        const response = await aiml.chat.completions.create({
+          model: 'gpt-4o-mini',
+          temperature: 0.0,
+          max_tokens: 400,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a legal compliance analyst. Given web content about a company, extract any mentions of ' +
+                'regulatory violations, government fines, court judgments, license revocations, or anti-trust investigations. ' +
+                'Return JSON: { violations: [{type: string, description: string (max 200 chars), year: string|null, resolved: boolean}] }. ' +
+                'Only include violations that clearly name the target company. If none found, return { violations: [] }.',
+            },
+            { role: 'user', content: `Company: ${companyName}\n\n${content}` },
+          ],
+        });
+
+        const parsed = JSON.parse(response.choices[0]?.message?.content ?? '{"violations":[]}');
+        const docViolations: any[] = parsed.violations ?? [];
+
+        for (const v of docViolations) {
+          violations.push({
+            type:        String(v.type ?? 'Violation'),
+            description: String(v.description ?? '').slice(0, 200),
+            year:        v.year ? String(v.year) : null,
+            resolved:    Boolean(v.resolved),
+          });
+        }
+
+        if (docViolations.length > 0 && doc.url) {
+          srcs.push({ url: doc.url, title: doc.metadata?.title ?? doc.title ?? doc.url });
+        }
+      } catch {
+        // Skip docs where AI extraction fails
+      }
+    }
+  } catch (err: any) {
+    log('warn', 'Evaluator', `Compliance web scrape failed for "${companyName}": ${err.message}`);
+  }
+
+  return { violations, sources: srcs };
+}
+
 // ============================================================
 // Module: Sanction Risks
-// Data sources: Insolvency + sanctions-tagged news
+// Primary: OpenSanctions API (EU, OFAC, UN, 100+ lists)
+// Secondary: sanctions-tagged news articles
+// Note: ISIR insolvency check belongs in Compliance, not here.
 // ============================================================
 
-async function evaluateSanctions(ico: string, companyName: string, prefetchedArticles: ScrapedArticle[] = []): Promise<ModuleResult> {
+async function evaluateSanctions(
+  ico: string,
+  companyName: string,
+  country: string = '',
+  prefetchedArticles: ScrapedArticle[] = []
+): Promise<ModuleResult> {
   const sanctionNews = prefetchedArticles.filter((a) => a.tags.includes('sanctions'));
 
   let score = 90;
   const findings: string[] = [];
   const sources: { url: string; title: string }[] = [];
 
-  // For Czech companies only: check ISIR as a sanctions risk proxy
-  if (ico) {
-    const insolvency = await checkInsolvency(ico);
-    sources.push({ url: `https://isir.justice.cz/isir/ueu/vysledek_lustrace.do?ic=${ico}&typ=ic`, title: 'ISIR – Czech Insolvency Register' });
+  // ── Primary: OpenSanctions API ────────────────────────────
+  const sanctionsResult = await checkSanctionsList(companyName, country || undefined);
 
-    const activeInsolvency = insolvency.filter((r) => r.status === 'active');
-    if (activeInsolvency.length > 0) {
-      score -= activeInsolvency.length * 30;
-      findings.push(`⚠️ ${activeInsolvency.length} active insolvency case(s) detected — potential financial sanctions risk.`);
-    } else {
-      findings.push('No active insolvency proceedings detected in Czech ISIR.');
-    }
-  } else {
-    findings.push('Czech Insolvency Register (ISIR) not applicable — international company. Sanctions screening based on news sources only.');
-    findings.push('Recommended: verify against EU sanctions list, OFAC SDN list, and UN consolidated sanctions list.');
+  if (!sanctionsResult.api_available) {
+    findings.push('Automated sanctions database check unavailable — news-based screening only.');
     sources.push({ url: 'https://www.sanctionsmap.eu/', title: 'EU Sanctions Map' });
     sources.push({ url: 'https://sanctionssearch.ofac.treas.gov/', title: 'OFAC Sanctions Search' });
+  } else {
+    const listsText = sanctionsResult.lists_checked_labels.slice(0, 4).join(', ');
+    const strongMatches = sanctionsResult.matches.filter((m) => m.match_score >= 0.70);
+    const possibleMatches = sanctionsResult.matches.filter((m) => m.match_score >= 0.50 && m.match_score < 0.70);
+
+    if (strongMatches.length > 0) {
+      score = 0;
+      for (const m of strongMatches) {
+        const lists = m.dataset_labels.join(', ');
+        findings.push(`🔴 SANCTIONS MATCH: "${m.entity_name}" found on ${lists} (confidence: ${Math.round(m.match_score * 100)}%). Contracting may be illegal.`);
+      }
+    } else if (possibleMatches.length > 0) {
+      score -= possibleMatches.length * 40;
+      for (const m of possibleMatches) {
+        const lists = m.dataset_labels.join(', ');
+        findings.push(`⚠️ Possible sanctions match: "${m.entity_name}" on ${lists} (confidence: ${Math.round(m.match_score * 100)}%) — manual review required.`);
+      }
+    } else {
+      findings.push(`Screened against ${listsText} — no sanctions matches found.`);
+    }
+
+    sources.push({ url: 'https://www.opensanctions.org/', title: 'OpenSanctions – Aggregated Sanctions Database' });
   }
 
-  // Sanctions-related news (applies to all companies)
+  // ── Secondary: Sanctions-tagged news ─────────────────────
   if (sanctionNews.length === 0) {
     findings.push('No sanctions-related news found in monitored news sources.');
   } else {
-    score -= sanctionNews.length * 20;
-    findings.push(`🔴 ${sanctionNews.length} sanctions-related news article(s) found.`);
+    score -= Math.min(sanctionNews.length * 20, 40);
+    findings.push(`⚠️ ${sanctionNews.length} sanctions-related news article(s) found.`);
     for (const article of sanctionNews.slice(0, 3)) {
       findings.push(`  • "${article.title}" — ${article.source_name}`);
       sources.push({ url: article.source_url, title: article.title });
@@ -688,13 +875,24 @@ async function evaluateSanctions(ico: string, companyName: string, prefetchedArt
   }
 
   score = clamp(score, 0, 100);
+
+  const aiSummary = await generateModuleSummary('sanctions', companyName, score, scoreToRisk(score), findings, !ico);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Sanction Risks', score, companyName, sanctionNews.length === 0 ? 'clean' : 'issues found'),
+    summary: aiSummary ?? buildSummary('Sanction Risks', score, companyName,
+      sanctionsResult.matches.length === 0 && sanctionNews.length === 0 ? 'clean' : 'issues found'),
     findings,
     sources,
-    raw_data: { sanctionNews: sanctionNews.map((a) => ({ title: a.title, url: a.source_url, tags: a.tags })) },
+    raw_data: {
+      opensanctions: {
+        api_available:   sanctionsResult.api_available,
+        matches:         sanctionsResult.matches,
+        lists_checked:   sanctionsResult.lists_checked,
+      },
+      sanctionNews: sanctionNews.map((a) => ({ title: a.title, url: a.source_url, tags: a.tags })),
+    },
   };
 }
 
@@ -710,19 +908,24 @@ async function evaluateMarket(ico: string, companyName: string, prefetchedArticl
   const findings: string[] = [];
   const sources: { url: string; title: string }[] = [];
 
+  // Bilingual keyword lists — Czech for CZ companies, English for international
+  const positiveCz = ['zisk', 'akvizic', 'ocenění', 'růst'];
+  const positiveEn = ['growth', 'expansion', 'award', 'investment', 'acquisition', 'profit', 'revenue record'];
+  const negativeCz = ['insolvenc', 'úpadek', 'sankc', 'pokuta', 'kauza', 'propouštění', 'podvod'];
+  const negativeEn = ['fraud', 'corruption', 'lawsuit', 'penalty', 'fine', 'scandal',
+                      'misconduct', 'bribery', 'indictment', 'layoff', 'violation', 'recall'];
+
+  const positiveKeywords = ico ? [...positiveCz, ...positiveEn] : positiveEn;
+  const negativeKeywords = ico ? [...negativeCz, ...negativeEn] : negativeEn;
+
   if (articles.length === 0) {
-    findings.push('No recent news articles found for this company across Czech news sources.');
-    findings.push('Limited media presence may indicate a smaller market footprint.');
+    findings.push(`No recent news articles found for ${companyName} across monitored news sources.`);
   } else {
-    findings.push(`Found ${articles.length} news article(s) mentioning ${companyName}.`);
+    findings.push(`${articles.length} news article(s) found mentioning ${companyName}.`);
 
     for (const article of articles.slice(0, 5)) {
       sources.push({ url: article.source_url, title: article.title });
     }
-
-    // Simple sentiment heuristic based on tag presence
-    const positiveKeywords = ['zisk', 'growth', 'expansion', 'award', 'investment', 'akvizic', 'finance'];
-    const negativeKeywords = ['insolvenc', 'úpadek', 'sankc', 'scandal', 'pokuta', 'kauza', 'layoff', 'propouštění'];
 
     let positiveCount = 0;
     let negativeCount = 0;
@@ -735,11 +938,11 @@ async function evaluateMarket(ico: string, companyName: string, prefetchedArticl
 
     if (positiveCount > 0) {
       score += Math.min(positiveCount * 3, 15);
-      findings.push(`${positiveCount} article(s) with positive indicators (growth, investment, financial results).`);
+      findings.push(`${positiveCount} article(s) with positive signals (growth, investment, recognition).`);
     }
     if (negativeCount > 0) {
       score -= negativeCount * 8;
-      findings.push(`⚠️ ${negativeCount} article(s) with negative indicators (insolvency, sanctions, layoffs).`);
+      findings.push(`⚠️ ${negativeCount} article(s) with negative signals (sanctions, fines, misconduct, layoffs).`);
     }
 
     // Tag-based context
@@ -753,18 +956,24 @@ async function evaluateMarket(ico: string, companyName: string, prefetchedArticl
       .map(([tag, count]) => `${tag} (${count})`);
 
     if (topTags.length > 0) {
-      findings.push(`Most frequent content themes: ${topTags.join(', ')}`);
+      findings.push(`Dominant news themes: ${topTags.join(', ')}`);
     }
   }
 
   score = clamp(score, 0, 100);
+
+  const aiSummary = await generateModuleSummary('market', companyName, score, scoreToRisk(score), findings, !ico);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Market & Reputation', score, companyName, `${articles.length} articles found`),
+    summary: aiSummary ?? buildSummary('Market & Reputation', score, companyName, `${articles.length} articles found`),
     findings,
     sources,
-    raw_data: { article_count: articles.length, articles: articles.slice(0, 10).map((a) => ({ title: a.title, url: a.source_url, tags: a.tags })) },
+    raw_data: {
+      article_count: articles.length,
+      articles: articles.slice(0, 10).map((a) => ({ title: a.title, url: a.source_url, tags: a.tags })),
+    },
   };
 }
 
@@ -780,6 +989,18 @@ async function evaluateESG(ico: string, companyName: string, prefetchedArticles:
   const findings: string[] = [];
   const sources: { url: string; title: string }[] = [];
 
+  // Bilingual ESG keyword lists — Czech for CZ companies, English for international
+  const positiveEsgCz = ['udržiteln', 'obnoviteln'];
+  const positiveEsgEn = ['sustainability', 'renewable', 'solar', 'wind', 'circular economy',
+                         'carbon neutral', 'net zero', 'decarbonization', 'green energy'];
+  const negativeEsgCz = ['emis', 'uhlí'];
+  const negativeEsgEn = ['pollution', 'coal', 'greenwashing', 'environmental violation',
+                         'emissions scandal', 'labor dispute', 'human rights violation',
+                         'child labor', 'deforestation'];
+
+  const positiveEsg = ico ? [...positiveEsgCz, ...positiveEsgEn] : positiveEsgEn;
+  const negativeEsg = ico ? [...negativeEsgCz, ...negativeEsgEn] : negativeEsgEn;
+
   // Czech ERÚ energy licence check — only applicable with IČO
   if (ico) {
     const licenses = await checkEnergyLicenses(ico);
@@ -793,18 +1014,14 @@ async function evaluateESG(ico: string, companyName: string, prefetchedArticles:
         findings.push(`  • ${lic.license_type} — ${lic.source.toUpperCase()} licence ${lic.license_number}`);
       }
     } else {
-      findings.push('No energy licences found in Czech ERÚ — company is likely not in the Czech regulated energy sector.');
+      findings.push('No energy licences found in Czech ERÚ — company is not in the Czech regulated energy sector.');
     }
   } else {
-    findings.push('Czech ERÚ energy licence registry not applicable — international company.');
-    findings.push('ESG assessment based on publicly available news sources. Manual review of sustainability reports recommended.');
+    findings.push('ESG assessment based on publicly available news and sustainability reports.');
   }
 
-  // ESG news
+  // ESG news sentiment
   if (esgNews.length > 0) {
-    const positiveEsg = ['udržiteln', 'renewable', 'solar', 'wind', 'circular', 'carbon neutral'];
-    const negativeEsg = ['emis', 'pollution', 'uhlí', 'coal', 'greenwashing'];
-
     let esgPositive = 0;
     let esgNegative = 0;
 
@@ -816,24 +1033,27 @@ async function evaluateESG(ico: string, companyName: string, prefetchedArticles:
 
     if (esgPositive > 0) {
       score += Math.min(esgPositive * 4, 10);
-      findings.push(`${esgPositive} positive ESG/sustainability article(s) found.`);
+      findings.push(`${esgPositive} article(s) with positive ESG signals (sustainability, renewables, carbon neutral).`);
     }
     if (esgNegative > 0) {
       score -= esgNegative * 8;
-      findings.push(`⚠️ ${esgNegative} article(s) with negative ESG indicators (emissions, coal, pollution).`);
+      findings.push(`⚠️ ${esgNegative} article(s) with negative ESG signals (pollution, greenwashing, labor violations).`);
     }
     for (const article of esgNews.slice(0, 3)) {
       sources.push({ url: article.source_url, title: article.title });
     }
   } else {
-    findings.push('No ESG or energy-related news found for this company.');
+    findings.push('No ESG or sustainability-related news found in monitored sources.');
   }
 
   score = clamp(score, 0, 100);
+
+  const aiSummary = await generateModuleSummary('esg', companyName, score, scoreToRisk(score), findings, !ico);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Environmental & ESG', score, companyName, `${esgNews.length} ESG articles`),
+    summary: aiSummary ?? buildSummary('Environmental & ESG', score, companyName, `${esgNews.length} ESG articles`),
     findings,
     sources,
     raw_data: { esgNews: esgNews.map((a) => ({ title: a.title, url: a.source_url })) },
@@ -854,8 +1074,7 @@ async function evaluateCyber(ico: string, companyName: string, prefetchedArticle
   const sources: { url: string; title: string }[] = [];
 
   if (cyberArticles.length === 0) {
-    findings.push('No cyber security or GDPR-related incidents found in Czech news sources.');
-    findings.push('Note: Absence of public reports does not guarantee strong cyber posture — internal assessments recommended.');
+    findings.push('No cyber security or GDPR-related incidents found in monitored news sources.');
   } else {
     score -= cyberArticles.length * 15;
     findings.push(`⚠️ ${cyberArticles.length} cyber/GDPR-related article(s) found mentioning ${companyName}.`);
@@ -877,13 +1096,20 @@ async function evaluateCyber(ico: string, companyName: string, prefetchedArticle
   }
 
   score = clamp(score, 0, 100);
+
+  const aiSummary = await generateModuleSummary('cyber', companyName, score, scoreToRisk(score), findings, !ico);
+
   return {
     score,
     risk_level: scoreToRisk(score),
-    summary: buildSummary('Cyber Security', score, companyName, `${cyberArticles.length} incidents in public records`),
+    summary: aiSummary ?? buildSummary('Cyber Security', score, companyName, `${cyberArticles.length} incidents in public records`),
     findings,
     sources,
-    raw_data: { cyberArticleCount: cyberArticles.length, articles: cyberArticles.map((a) => ({ title: a.title, url: a.source_url })) },
+    raw_data: {
+      cyberArticleCount: cyberArticles.length,
+      articles: cyberArticles.map((a) => ({ title: a.title, url: a.source_url })),
+      notes: ['Absence of public reports does not guarantee strong cyber posture — internal security assessments recommended before contracting.'],
+    },
   };
 }
 

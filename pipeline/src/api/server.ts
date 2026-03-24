@@ -13,7 +13,8 @@ import {
   updateScrapeRunSummaries,
   trackFirecrawlUsage,
 } from '../utils/supabase-storage';
-import { generateSourceSummaries } from '../utils/ai-summarizer';
+import { generateSourceSummaries, generateExecutiveSummary } from '../utils/ai-summarizer';
+import type { ModuleResultSummary } from '../utils/ai-summarizer';
 import type { ScrapedArticle } from '../types';
 
 dotenv.config();
@@ -72,6 +73,119 @@ app.post('/evaluate', async (req, res) => {
   runEvaluationPipeline(evaluation_id, ico, company_name, country ?? '', website_url ?? '', modules).catch((err) => {
     log('error', 'API', `Unhandled pipeline error for ${evaluation_id}: ${err.message}`);
   });
+});
+
+// ============================================================
+// POST /chat
+// AI analyst chat about the supplier evaluation portfolio.
+// Body: { message: string, context: ChatContext, history: ChatMessage[] }
+// Uses gpt-4o-mini (cost-efficient) with dashboard context injected into system prompt.
+// History is capped to the last 10 messages to bound token usage.
+// ============================================================
+
+interface ChatContext {
+  stats: {
+    total_suppliers: number;
+    active_evaluations: number;
+    completed_evaluations: number;
+    avg_score: number;
+    low_risk_count: number;
+    medium_risk_count: number;
+    high_risk_count: number;
+    critical_risk_count: number;
+  } | null;
+  recentEvaluations: Array<{
+    company_name: string;
+    ico: string | null;
+    status: string;
+    overall_score: number | null;
+    overall_risk_level: string | null;
+    modules_completed: number;
+    module_count: number;
+  }>;
+}
+
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+function buildChatSystemPrompt(ctx: ChatContext): string {
+  const s = ctx.stats;
+  const portfolio = s
+    ? `PORTFOLIO OVERVIEW:\n` +
+      `- Total suppliers tracked: ${s.total_suppliers}\n` +
+      `- Active evaluations: ${s.active_evaluations}\n` +
+      `- Completed evaluations: ${s.completed_evaluations}\n` +
+      `- Portfolio average score: ${s.avg_score != null ? Math.round(s.avg_score) : 'N/A'}/100\n` +
+      `- Risk breakdown — Low: ${s.low_risk_count}, Medium: ${s.medium_risk_count}, High: ${s.high_risk_count}, Critical: ${s.critical_risk_count}`
+    : 'No portfolio data available yet.';
+
+  const recentLines =
+    ctx.recentEvaluations.length > 0
+      ? ctx.recentEvaluations
+          .map((e) => {
+            const score = e.overall_score != null ? `${e.overall_score}/100` : 'pending';
+            const risk = e.overall_risk_level ?? 'pending';
+            return `- ${e.company_name}${e.ico ? ` (IČO: ${e.ico})` : ''}: score ${score}, risk ${risk}, status ${e.status}, modules ${e.modules_completed}/${e.module_count}`;
+          })
+          .join('\n')
+      : 'No recent evaluations available.';
+
+  return (
+    `You are an AI procurement risk analyst for CETIN a.s., a Czech telecommunications infrastructure company. ` +
+    `CETIN owns and operates the fixed-line telephone and fibre infrastructure in Czechia and contracts with many vendors for services, materials, and technology.\n\n` +
+    `You have access to live supplier evaluation data from the dashboard:\n\n` +
+    `${portfolio}\n\n` +
+    `RECENT EVALUATIONS (most recent first):\n${recentLines}\n\n` +
+    `Your responsibilities:\n` +
+    `1. Answer questions about specific suppliers or the overall vendor portfolio\n` +
+    `2. Explain what risk scores mean in the context of CETIN's procurement decisions\n` +
+    `3. Describe what each evaluation module measures: financial health, compliance/legal, sanctions screening, market reputation, ESG practices, cybersecurity posture\n` +
+    `4. Identify patterns, trends, or concerns across the portfolio\n` +
+    `5. Give concise, actionable procurement recommendations\n\n` +
+    `Rules: Keep responses to 3–5 sentences. Be professional, specific, and direct. ` +
+    `If a vendor is not in the data, say so clearly. ` +
+    `Flag any speculation as general guidance. Do not use markdown or bullet points.`
+  );
+}
+
+app.post('/chat', async (req, res) => {
+  const { message, context, history } = req.body as {
+    message: string;
+    context: ChatContext;
+    history: ChatMessage[];
+  };
+
+  if (!message?.trim()) {
+    return res.status(400).json({ error: 'message is required' });
+  }
+
+  try {
+    const aiml = getAIML();
+    const systemPrompt = buildChatSystemPrompt(context ?? { stats: null, recentEvaluations: [] });
+    const trimmedHistory = (history ?? []).slice(-10);
+
+    const response = await aiml.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...trimmedHistory.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user', content: message.trim() },
+      ],
+      max_tokens: 400,
+      temperature: 0.4,
+    });
+
+    const reply = response.choices[0]?.message?.content?.trim();
+    if (!reply) throw new Error('Empty response from AI');
+
+    log('info', 'Chat', `Reply generated (${reply.length} chars)`);
+    res.json({ reply });
+  } catch (err: any) {
+    log('error', 'Chat', `Chat error: ${err.message}`);
+    res.status(500).json({ error: 'Failed to generate response' });
+  }
 });
 
 // ============================================================
@@ -166,6 +280,40 @@ async function runEvaluationPipeline(
       .eq('id', evaluationId);
 
     log('info', 'Pipeline', `Evaluation ${evaluationId} completed. Score: ${overallScore}, Risk: ${overallRisk}`);
+
+    // Generate AI executive summary and save
+    if (overallScore !== null && (completedModules?.length ?? 0) > 0) {
+      try {
+        const { data: moduleRows } = await supabase
+          .from('evaluation_modules')
+          .select('module_type, score, risk_level, summary')
+          .eq('evaluation_id', evaluationId)
+          .eq('status', 'completed');
+
+        if (moduleRows && moduleRows.length > 0) {
+          const execSummary = await withTimeout(
+            generateExecutiveSummary(
+              companyName,
+              overallScore,
+              overallRisk,
+              moduleRows as ModuleResultSummary[]
+            ),
+            30_000,
+            null
+          );
+
+          if (execSummary) {
+            await supabase
+              .from('evaluations')
+              .update({ executive_summary: execSummary })
+              .eq('id', evaluationId);
+            log('info', 'Pipeline', `Executive summary saved for ${evaluationId}`);
+          }
+        }
+      } catch (err: any) {
+        log('warn', 'Pipeline', `Executive summary generation failed: ${err.message}`);
+      }
+    }
   } catch (err: any) {
     log('error', 'Pipeline', `Fatal error for evaluation ${evaluationId}: ${err.message}`);
     await supabase
