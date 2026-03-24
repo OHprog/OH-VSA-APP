@@ -264,18 +264,51 @@ function computeInternationalScore(
   const findings: string[] = [];
   const sources: { url: string; title: string }[] = [];
 
-  const ocData = (snapshot?.raw_extraction?.opencorporates ?? null) as OpenCorporatesResult | null;
+  const ocData   = (snapshot?.raw_extraction?.opencorporates ?? null) as OpenCorporatesResult | null;
+  const wikiData = (snapshot?.raw_extraction?.wikipedia ?? null) as Record<string, any> | null;
+  const fmpQuote = (snapshot?.raw_extraction?.fmp?.quote ?? null) as Record<string, any> | null;
 
   // Human-readable label for the financial data source(s)
   const docType = snapshot?.document_type ?? '';
   const sourceLabel = docType
     ? docType
-        .replace('fmp_api',       'Financial Modeling Prep')
-        .replace('yahoo_finance', 'Yahoo Finance')
-        .replace('ir_page',       'IR page (scraped)')
+        .replace('fmp_api',             'Financial Modeling Prep')
+        .replace('yahoo_finance',       'Yahoo Finance')
+        .replace('ir_page',             'IR page')
+        .replace('web_annual_report',   'web annual report')
+        .replace('wikipedia',           'Wikipedia')
         .replace('opencorporates_only', 'OpenCorporates')
         .replace(/\+/g, ' + ')
     : 'unknown';
+
+  // ── Company overview (Wikipedia) ─────────────────────────────
+  if (wikiData?.description) {
+    findings.push(wikiData.description);
+  }
+  if (wikiData?.headquarters || wikiData?.founded || wikiData?.employees) {
+    const parts: string[] = [];
+    if (wikiData.founded)      parts.push(`founded ${wikiData.founded}`);
+    if (wikiData.headquarters) parts.push(`headquartered in ${wikiData.headquarters}`);
+    if (wikiData.employees)    parts.push(`${Number(wikiData.employees).toLocaleString()} employees`);
+    findings.push(`${parts.join(', ')}.`);
+    if (wikiData.source_url) sources.push({ url: wikiData.source_url, title: `${companyName} — Wikipedia` });
+  }
+
+  // ── Stock market data (FMP quote) ────────────────────────────
+  if (fmpQuote) {
+    const ticker     = fmpQuote.ticker ?? '';
+    const price      = fmpQuote.price      != null ? `$${Number(fmpQuote.price).toFixed(2)}`         : null;
+    const marketCap  = fmpQuote.market_cap != null ? fmtBigNumber(fmpQuote.market_cap)               : null;
+    const pe         = fmpQuote.pe         != null ? `P/E ${Number(fmpQuote.pe).toFixed(1)}`         : null;
+    const change     = fmpQuote.change_pct != null
+      ? `${fmpQuote.change_pct >= 0 ? '+' : ''}${Number(fmpQuote.change_pct).toFixed(2)}%`
+      : null;
+    const parts = [ticker, price, marketCap, pe, change].filter(Boolean);
+    if (parts.length) findings.push(`Stock: ${parts.join(' | ')} (Source: Financial Modeling Prep)`);
+    if (snapshot?.source_url) {
+      sources.push({ url: snapshot.source_url, title: `${ticker} — Financial Modeling Prep` });
+    }
+  }
 
   // ── Component 1: Profitability (profit_margin) ────────────────
   const profitMargin = snapshot?.ratios.profit_margin ?? null;
@@ -287,11 +320,10 @@ function computeInternationalScore(
   else if (profitMargin >= 0)       profScore = 30;
   else                              profScore = 10;
 
-  if (snapshot != null && snapshot.figures.net_profit !== null && snapshot.figures.revenue !== null) {
+  if (snapshot?.figures.net_profit != null && snapshot?.figures.revenue != null) {
     const pct = profitMargin !== null ? (profitMargin * 100).toFixed(1) : 'N/A';
-    findings.push(`Profit margin: ${pct}% (net profit ${fmtNumber(snapshot.figures.net_profit)} / revenue ${fmtNumber(snapshot.figures.revenue)}) — Source: ${sourceLabel}.`);
-  } else {
-    findings.push('Profitability data not available — neutral score applied.');
+    const interpretation = profitMargin === null ? '' : profitMargin >= 0.10 ? ' — strong profitability.' : profitMargin >= 0.05 ? ' — healthy margin.' : profitMargin >= 0.01 ? ' — thin margin.' : profitMargin >= 0 ? ' — near breakeven.' : ' — operating at a loss.';
+    findings.push(`Revenue: ${fmtNumber(snapshot.figures.revenue)} | Net profit: ${fmtNumber(snapshot.figures.net_profit)} | Profit margin: ${pct}%${interpretation} (FY ${snapshot.fiscal_year}, Source: ${sourceLabel})`);
   }
 
   // ── Component 2: Liquidity (current_ratio) ───────────────────
@@ -305,8 +337,8 @@ function computeInternationalScore(
   else                              liqScore = 10;
 
   if (currentRatio !== null) {
-    findings.push(`Current ratio: ${currentRatio.toFixed(2)} (current assets / current liabilities) — Source: ${sourceLabel}.`);
-    if (currentRatio < 1.0) findings.push('Current ratio below 1.0 — potential short-term liquidity concern.');
+    const liqNote = currentRatio >= 2.0 ? 'strong liquidity.' : currentRatio >= 1.5 ? 'adequate liquidity.' : currentRatio >= 1.0 ? 'acceptable liquidity.' : 'potential short-term liquidity concern.';
+    findings.push(`Current ratio: ${currentRatio.toFixed(2)} — ${liqNote}`);
   }
 
   // ── Component 3: Solvency (equity_ratio) ─────────────────────
@@ -320,79 +352,49 @@ function computeInternationalScore(
   else                              solScore = 5;
 
   if (equityRatio !== null) {
-    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% (equity / total assets) — Source: ${sourceLabel}.`);
-    if (equityRatio < 0) findings.push('Negative equity — company liabilities exceed assets.');
+    const solNote = equityRatio >= 0.50 ? 'strong balance sheet.' : equityRatio >= 0.30 ? 'moderate leverage.' : equityRatio >= 0.10 ? 'highly leveraged.' : equityRatio < 0 ? 'liabilities exceed assets — elevated risk.' : 'very high leverage.';
+    findings.push(`Equity ratio: ${(equityRatio * 100).toFixed(1)}% — ${solNote}`);
   }
 
-  // ── Component 4: Company health (OpenCorporates) ─────────────
+  // ── Component 4: Company health (OpenCorporates / Wikipedia) ─
   let healthScore: number;
   if (!ocData) {
     healthScore = 40;
-    findings.push(`Company registration status unknown — OpenCorporates returned no data.`);
-    findings.push(`Verify ${companyName} in the national business registry${country ? ` (${country.toUpperCase()})` : ''}.`);
+    // Only add registry note if we don't already have good company info from Wikipedia
+    if (!wikiData?.description) {
+      findings.push(`Company registration status could not be verified for ${companyName}${country ? ` (${country.toUpperCase()})` : ''}.`);
+    }
     sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – International Business Registry' });
   } else if (ocData.status === 'dissolved') {
     healthScore = 10;
-    findings.push('Company has been dissolved or struck off — critical financial risk. (Source: OpenCorporates)');
+    findings.push('Company has been dissolved or struck off — critical financial risk.');
   } else if (ocData.status === 'inactive') {
     healthScore = 20;
-    findings.push('Company is inactive per OpenCorporates registry. (Source: OpenCorporates)');
+    findings.push('Company is currently inactive per OpenCorporates registry.');
   } else {
     const yearsOld = ocData.years_old;
     if (ocData.status === 'unknown') {
       healthScore = 40;
-      findings.push('Company registration status unclear. (Source: OpenCorporates)');
     } else if (yearsOld === null)  healthScore = 65;
     else if (yearsOld >= 10)       healthScore = 100;
     else if (yearsOld >= 5)        healthScore = 80;
     else if (yearsOld >= 2)        healthScore = 65;
     else                           healthScore = 50;
 
-    if (ocData.status === 'active') {
-      findings.push(`Company is actively registered${ocData.jurisdiction ? ` in ${ocData.jurisdiction.toUpperCase()}` : ''}. (Source: OpenCorporates)`);
+    if (ocData.status === 'active' && ocData.incorporation_date) {
+      findings.push(`Actively registered company${ocData.jurisdiction ? ` (${ocData.jurisdiction.toUpperCase()})` : ''}, incorporated ${ocData.incorporation_date.slice(0, 10)}${ocData.years_old != null ? ` — ${ocData.years_old} years in operation.` : '.'}`);
+    } else if (ocData.status === 'active') {
+      findings.push(`Actively registered company${ocData.jurisdiction ? ` in ${ocData.jurisdiction.toUpperCase()}` : ''}.`);
     }
-    if (ocData.incorporation_date) {
-      findings.push(`Incorporated: ${ocData.incorporation_date.slice(0, 10)}${ocData.years_old !== null ? ` (${ocData.years_old} years)` : ''}. (Source: OpenCorporates)`);
-    }
-    if (ocData.company_type) {
-      findings.push(`Legal form: ${ocData.company_type}. (Source: OpenCorporates)`);
-    }
+    if (ocData.company_type) findings.push(`Legal form: ${ocData.company_type}.`);
     sources.push({ url: `https://opencorporates.com/companies?q=${encodeURIComponent(companyName)}`, title: 'OpenCorporates – Company Registry' });
   }
 
-  // Cross-source comparison note when both FMP and Yahoo returned data
-  const hasFmp   = !!(snapshot?.raw_extraction?.fmp?.figures);
-  const hasYahoo = !!(snapshot?.raw_extraction?.yahoo?.figures);
-  if (hasFmp && hasYahoo) {
-    findings.push('Financial figures cross-referenced from Financial Modeling Prep and Yahoo Finance — merged for completeness.');
-  }
-
-  if (snapshot?.source_url) {
-    sources.push({ url: snapshot.source_url, title: `Financial data — ${sourceLabel} (FY ${snapshot.fiscal_year})` });
-  }
-
+  // ── Data completeness note ────────────────────────────────────
   if (!snapshot) {
-    findings.push('No financial data found — neutral scores applied to all financial components. Sources attempted:');
-    findings.push('FMP API: key not configured or no ticker match for this company name.');
-    findings.push('Yahoo Finance: financials page could not be scraped.');
-    findings.push('IR / Annual report: no website URL on supplier record.');
-    findings.push('Web annual report search: no usable results found.');
-    findings.push('Tip: Add a website URL to the supplier record to enable annual report extraction.');
-  } else {
-    const diag = (snapshot.raw_extraction?._diagnostics ?? {}) as Record<string, string>;
-    const diagFindings: string[] = [];
-    if (diag.fmp && diag.fmp !== 'ok')               diagFindings.push(`FMP API: ${diag.fmp.replace(/_/g, ' ')}`);
-    if (diag.yahoo && diag.yahoo !== 'ok')            diagFindings.push(`Yahoo Finance: ${diag.yahoo.replace(/_/g, ' ')}`);
-    if (diag.ir && diag.ir !== 'ok')                  diagFindings.push(`IR page: ${diag.ir.replace(/_/g, ' ')}`);
-    if (diag.web_annual_report && diag.web_annual_report !== 'ok') diagFindings.push('Web annual report search: not found');
-    if (diagFindings.length) findings.push(...diagFindings);
-
-    if (!snapshot.data_complete) {
-      findings.push(`Partial financial data (${sourceLabel}) — some ratios could not be computed.`);
-      if (diag.ir === 'no_website_url') findings.push('Tip: Add a website URL to the supplier record to enable annual report extraction.');
-    } else {
-      findings.push(`Complete financial data from fiscal year ${snapshot.fiscal_year} — ${sourceLabel}.`);
-    }
+    findings.push('No financial data could be retrieved for this company. Registration status and qualitative data only.');
+  } else if (!snapshot.data_complete) {
+    findings.push(`Financial data partially available (FY ${snapshot.fiscal_year}) — not all ratios could be computed.`);
   }
 
   const score = clamp(
@@ -549,6 +551,15 @@ function computeFinancialScore(
 function fmtNumber(n: number | null): string {
   if (n === null) return 'N/A';
   return Math.round(n).toLocaleString('cs-CZ');
+}
+
+/** Format large numbers as $2.1T, $350.4B, $1.2M etc. */
+function fmtBigNumber(n: number | null): string {
+  if (n == null) return 'N/A';
+  if (Math.abs(n) >= 1e12) return `$${(n / 1e12).toFixed(1)}T`;
+  if (Math.abs(n) >= 1e9)  return `$${(n / 1e9).toFixed(1)}B`;
+  if (Math.abs(n) >= 1e6)  return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${Math.round(n).toLocaleString()}`;
 }
 
 // ============================================================
