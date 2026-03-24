@@ -372,11 +372,27 @@ function computeInternationalScore(
   }
 
   if (!snapshot) {
-    findings.push('No financial data retrieved from any source — neutral scores applied to all financial components.');
-  } else if (!snapshot.data_complete) {
-    findings.push(`Partial financial data (${sourceLabel}) — some ratios could not be computed.`);
+    findings.push('No financial data found — neutral scores applied to all financial components. Sources attempted:');
+    findings.push('• FMP API: key not configured or no ticker match for this company name.');
+    findings.push('• Yahoo Finance: financials page could not be scraped.');
+    findings.push('• IR / Annual report: no website URL on supplier record.');
+    findings.push('• Web annual report search: no usable results found.');
+    findings.push('Tip: Add a website URL to the supplier record to enable annual report extraction.');
   } else {
-    findings.push(`Complete financial data from fiscal year ${snapshot.fiscal_year} — ${sourceLabel}.`);
+    const diag = (snapshot.raw_extraction?._diagnostics ?? {}) as Record<string, string>;
+    const diagFindings: string[] = [];
+    if (diag.fmp && diag.fmp !== 'ok')               diagFindings.push(`• FMP API: ${diag.fmp.replace(/_/g, ' ')}`);
+    if (diag.yahoo && diag.yahoo !== 'ok')            diagFindings.push(`• Yahoo Finance: ${diag.yahoo.replace(/_/g, ' ')}`);
+    if (diag.ir && diag.ir !== 'ok')                  diagFindings.push(`• IR page: ${diag.ir.replace(/_/g, ' ')}`);
+    if (diag.web_annual_report && diag.web_annual_report !== 'ok') diagFindings.push('• Web annual report search: not found');
+    if (diagFindings.length) findings.push(...diagFindings);
+
+    if (!snapshot.data_complete) {
+      findings.push(`Partial financial data (${sourceLabel}) — some ratios could not be computed.`);
+      if (diag.ir === 'no_website_url') findings.push('Tip: Add a website URL to the supplier record to enable annual report extraction.');
+    } else {
+      findings.push(`Complete financial data from fiscal year ${snapshot.fiscal_year} — ${sourceLabel}.`);
+    }
   }
 
   const score = clamp(
