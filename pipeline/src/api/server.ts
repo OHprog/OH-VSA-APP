@@ -184,7 +184,8 @@ app.post('/chat', async (req, res) => {
     res.json({ reply });
   } catch (err: any) {
     log('error', 'Chat', `Chat error: ${err.message}`);
-    res.status(500).json({ error: 'Failed to generate response' });
+    // Include detail so we can diagnose the exact AIML error from Azure logs
+    res.status(500).json({ error: 'Failed to generate response', detail: err.message });
   }
 });
 
