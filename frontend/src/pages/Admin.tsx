@@ -283,7 +283,7 @@ export default function Admin() {
     // 1. Supabase — inferred from whether the main queries succeeded
     updateHealth("Supabase", supabaseOk ? "ok" : "error");
 
-    // 2. Pipeline API — live GET /health with 5-second timeout
+    // 2. Pipeline API + 3–4. FireCrawl / AI/ML — from live GET /health
     const pipelineUrl = (import.meta.env.VITE_PIPELINE_URL as string | undefined) ?? "https://vsa-pipeline.azurewebsites.net";
     try {
       const controller = new AbortController();
@@ -292,37 +292,30 @@ export default function Admin() {
       clearTimeout(timer);
       const body = await res.json();
       updateHealth("Pipeline API", body?.ok === true ? "ok" : "error");
+      // Pipeline reports whether API keys are configured for each service
+      updateHealth("FireCrawl", body?.services?.firecrawl === true ? "ok" : "error");
+      updateHealth("AI/ML API", body?.services?.aiml === true ? "ok" : "error");
     } catch {
       updateHealth("Pipeline API", "error");
+      updateHealth("FireCrawl", "unknown");
+      updateHealth("AI/ML API", "unknown");
     }
 
-    // 3–5. Data sources — one query for FireCrawl, AI/ML, ARES
+    // 5. ARES — from data_sources table (it IS registered there)
     const { data: sources } = await supabase
       .from("data_sources")
       .select("name, status, last_sync_at");
 
     if (sources) {
-      const resolve = (keyword: string) =>
-        sources.find(s => s.name.toLowerCase().includes(keyword.toLowerCase()));
-
-      const firecrawl = resolve("firecrawl");
-      const aiml = resolve("ai") ?? resolve("openai") ?? resolve("aiml");
-      const ares = resolve("ares");
-
-      const toStatus = (ds: typeof sources[number] | undefined): ServiceHealth["status"] =>
-        ds ? (ds.status === "active" ? "ok" : "error") : "unknown";
-
-      const toDetail = (ds: typeof sources[number] | undefined) =>
-        ds?.last_sync_at
-          ? `Last sync: ${formatDistanceToNow(new Date(ds.last_sync_at), { addSuffix: true })}`
-          : undefined;
-
-      updateHealth("FireCrawl", toStatus(firecrawl), toDetail(firecrawl));
-      updateHealth("AI/ML API", toStatus(aiml), toDetail(aiml));
-      updateHealth("ARES (Czech Registry)", toStatus(ares), toDetail(ares));
+      const ares = sources.find(s => s.name.toLowerCase().includes("ares"));
+      updateHealth(
+        "ARES (Czech Registry)",
+        ares ? (ares.status === "active" ? "ok" : "error") : "unknown",
+        ares?.last_sync_at
+          ? `Last sync: ${formatDistanceToNow(new Date(ares.last_sync_at), { addSuffix: true })}`
+          : undefined
+      );
     } else {
-      updateHealth("FireCrawl", "unknown");
-      updateHealth("AI/ML API", "unknown");
       updateHealth("ARES (Czech Registry)", "unknown");
     }
   };

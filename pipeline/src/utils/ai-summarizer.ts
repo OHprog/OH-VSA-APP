@@ -1,6 +1,7 @@
 import { ScrapedArticle } from '../types';
 import { getAIML } from './clients';
 import { log } from './helpers';
+import { trackApiUsage } from './supabase-storage';
 
 // Maximum sources and articles per source to summarize (keeps token usage bounded)
 const MAX_SOURCES = 6;
@@ -68,6 +69,8 @@ export async function generateSourceSummaries(
         max_tokens: 200,
         temperature: 0.3,
       });
+
+      trackApiUsage('aiml', response.usage?.total_tokens ?? 0).catch(() => {});
 
       const summary = response.choices[0]?.message?.content?.trim();
       if (summary) {
@@ -176,6 +179,8 @@ export async function generateModuleSummary(
       temperature: 0.3,
     });
 
+    trackApiUsage('aiml', response.usage?.total_tokens ?? 0).catch(() => {});
+
     const summary = response.choices[0]?.message?.content?.trim();
     if (summary) {
       log('info', 'AISummarizer', `Generated ${moduleType} module summary for "${companyName}"`);
@@ -245,6 +250,8 @@ export async function generateExecutiveSummary(
       max_tokens: 300,
       temperature: 0.3,
     });
+
+    trackApiUsage('aiml', response.usage?.total_tokens ?? 0).catch(() => {});
 
     const summary = response.choices[0]?.message?.content?.trim();
     if (summary) {

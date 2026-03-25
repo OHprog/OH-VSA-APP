@@ -1,5 +1,6 @@
 import { getSupabase, getAIML, getFireCrawl } from '../utils/clients';
 import { log } from '../utils/helpers';
+import { trackApiUsage } from '../utils/supabase-storage';
 import { lookupCompanyByICO } from '../scrapers/ares';
 import { checkInsolvency } from '../scrapers/insolvency';
 import { checkEnergyLicenses } from '../scrapers/energy';
@@ -785,6 +786,8 @@ async function scrapeComplianceWebIssues(
             { role: 'user', content: `Company: ${companyName}\n\n${content}` },
           ],
         });
+
+        trackApiUsage('aiml', response.usage?.total_tokens ?? 0).catch(() => {});
 
         const parsed = JSON.parse(response.choices[0]?.message?.content ?? '{"violations":[]}');
         const docViolations: any[] = parsed.violations ?? [];

@@ -39,7 +39,14 @@ app.use(express.json());
 // ============================================================
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    timestamp: new Date().toISOString(),
+    services: {
+      firecrawl: !!process.env.FIRECRAWL_API_KEY,
+      aiml: !!process.env.AIML_API_KEY,
+    },
+  });
 });
 
 // ============================================================
@@ -230,7 +237,7 @@ async function runEvaluationPipeline(
       }
       await completeScrapeRun(runId!, prefetchedArticles, Date.now() - scrapeStart, []);
       await saveArticlesForEvaluation(runId, evaluationId, ico, prefetchedArticles);
-      await trackFirecrawlUsage(prefetchedArticles.length);
+      await trackFirecrawlUsage(1); // Track each scrape attempt (not article count)
       log('info', 'Pipeline', `Pre-scraped ${prefetchedArticles.length} articles for ${companyName}`);
 
       // Generate per-source AI summaries and store on the scrape run record

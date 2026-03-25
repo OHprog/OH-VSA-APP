@@ -137,8 +137,8 @@ export async function updateScrapeRunSummaries(
 }
 
 /**
- * Upsert today's Firecrawl request count into api_usage.
- * Uses request_count to track approximate Firecrawl API calls.
+ * Upsert today's Firecrawl scrape count into api_usage.
+ * Tracks one scrape session per evaluation regardless of article yield.
  */
 export async function trackFirecrawlUsage(requestCount: number): Promise<void> {
   if (requestCount <= 0) return;
@@ -146,7 +146,6 @@ export async function trackFirecrawlUsage(requestCount: number): Promise<void> {
   const supabase = getSupabase();
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-  // Try upsert — increment today's count if row already exists
   const { data: existing } = await supabase
     .from('api_usage')
     .select('id, request_count')
@@ -166,6 +165,43 @@ export async function trackFirecrawlUsage(requestCount: number): Promise<void> {
       endpoint: 'scrape',
       request_count: requestCount,
       tokens_used: 0,
+      date: today,
+    });
+  }
+}
+
+/**
+ * Upsert today's AI/ML API token usage into api_usage.
+ * Call after each LLM completion response with response.usage.total_tokens.
+ */
+export async function trackApiUsage(service: string, tokens: number): Promise<void> {
+  if (tokens <= 0) return;
+
+  const supabase = getSupabase();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data: existing } = await supabase
+    .from('api_usage')
+    .select('id, request_count, tokens_used')
+    .eq('service', service)
+    .eq('endpoint', 'chat')
+    .eq('date', today)
+    .maybeSingle();
+
+  if (existing) {
+    await supabase
+      .from('api_usage')
+      .update({
+        request_count: existing.request_count + 1,
+        tokens_used: existing.tokens_used + tokens,
+      })
+      .eq('id', existing.id);
+  } else {
+    await supabase.from('api_usage').insert({
+      service,
+      endpoint: 'chat',
+      request_count: 1,
+      tokens_used: tokens,
       date: today,
     });
   }
