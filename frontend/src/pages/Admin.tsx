@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/table";
 import {
   Users, Database, Activity, UserPlus, Copy, Check, Pencil, Plus,
-  AlertCircle, CheckCircle2, Circle, ExternalLink, Server, Zap, Cloud,
+  AlertCircle, CheckCircle2, Circle, ExternalLink, Server, Zap, Cloud, Loader2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -70,6 +70,14 @@ interface AuditLogRow {
   details: Record<string, unknown>;
   created_at: string;
   user_name: string | null;
+}
+
+interface ServiceHealth {
+  name: string;
+  subtitle: string;
+  status: "ok" | "error" | "checking" | "unknown";
+  icon: React.ElementType;
+  detail?: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────
@@ -155,6 +163,7 @@ export default function Admin() {
   const [auditLog, setAuditLog] = useState<AuditLogRow[]>([]);
   const [systemLoading, setSystemLoading] = useState(true);
   const [actionFilter, setActionFilter] = useState("all");
+  const [healthChecks, setHealthChecks] = useState<ServiceHealth[]>([]);
 
   // ─── Fetch Users ─────────────────────────────────────
   const fetchUsers = async () => {
@@ -198,6 +207,16 @@ export default function Admin() {
   // ─── Fetch System Data ───────────────────────────────
   const fetchSystemData = async () => {
     setSystemLoading(true);
+
+    // Show spinners in health panel immediately
+    setHealthChecks([
+      { name: "Supabase", subtitle: "Database & Auth", status: "checking", icon: Cloud },
+      { name: "Pipeline API", subtitle: "Backend processing", status: "checking", icon: Activity },
+      { name: "FireCrawl", subtitle: "Web scraping", status: "checking", icon: Server },
+      { name: "AI/ML API", subtitle: "AI models", status: "checking", icon: Zap },
+      { name: "ARES (Czech Registry)", subtitle: "Company data", status: "checking", icon: Database },
+    ]);
+
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
 
     const [usageRes, logRes] = await Promise.all([
@@ -212,6 +231,15 @@ export default function Admin() {
         .order("created_at", { ascending: false })
         .limit(50),
     ]);
+
+    const supabaseOk = !usageRes.error && !logRes.error;
+
+    if (usageRes.error) {
+      toast({ title: "Error loading API usage", description: usageRes.error.message, variant: "destructive" });
+    }
+    if (logRes.error) {
+      toast({ title: "Error loading audit log", description: logRes.error.message, variant: "destructive" });
+    }
 
     setApiUsage((usageRes.data as ApiUsageRow[]) ?? []);
 
@@ -241,6 +269,84 @@ export default function Admin() {
       user_name: l.user_id ? nameMap.get(l.user_id) ?? "Unknown" : null,
     })));
     setSystemLoading(false);
+
+    // Run health checks after data load (async, updates health panel independently)
+    runHealthChecks(supabaseOk);
+  };
+
+  // ─── Health Check Helpers ────────────────────────────
+  const updateHealth = (name: string, status: ServiceHealth["status"], detail?: string) => {
+    setHealthChecks(prev => prev.map(h => h.name === name ? { ...h, status, detail } : h));
+  };
+
+  const runHealthChecks = async (supabaseOk: boolean) => {
+    // 1. Supabase — inferred from whether the main queries succeeded
+    updateHealth("Supabase", supabaseOk ? "ok" : "error");
+
+    // 2. Pipeline API — live GET /health with 5-second timeout
+    const pipelineUrl = (import.meta.env.VITE_PIPELINE_URL as string | undefined) ?? "https://vsa-pipeline.azurewebsites.net";
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${pipelineUrl}/health`, { signal: controller.signal });
+      clearTimeout(timer);
+      const body = await res.json();
+      updateHealth("Pipeline API", body?.ok === true ? "ok" : "error");
+    } catch {
+      updateHealth("Pipeline API", "error");
+    }
+
+    // 3–5. Data sources — one query for FireCrawl, AI/ML, ARES
+    const { data: sources } = await supabase
+      .from("data_sources")
+      .select("name, status, last_sync_at");
+
+    if (sources) {
+      const resolve = (keyword: string) =>
+        sources.find(s => s.name.toLowerCase().includes(keyword.toLowerCase()));
+
+      const firecrawl = resolve("firecrawl");
+      const aiml = resolve("ai") ?? resolve("openai") ?? resolve("aiml");
+      const ares = resolve("ares");
+
+      const toStatus = (ds: typeof sources[number] | undefined): ServiceHealth["status"] =>
+        ds ? (ds.status === "active" ? "ok" : "error") : "unknown";
+
+      const toDetail = (ds: typeof sources[number] | undefined) =>
+        ds?.last_sync_at
+          ? `Last sync: ${formatDistanceToNow(new Date(ds.last_sync_at), { addSuffix: true })}`
+          : undefined;
+
+      updateHealth("FireCrawl", toStatus(firecrawl), toDetail(firecrawl));
+      updateHealth("AI/ML API", toStatus(aiml), toDetail(aiml));
+      updateHealth("ARES (Czech Registry)", toStatus(ares), toDetail(ares));
+    } else {
+      updateHealth("FireCrawl", "unknown");
+      updateHealth("AI/ML API", "unknown");
+      updateHealth("ARES (Czech Registry)", "unknown");
+    }
+  };
+
+  // ─── Log Audit Event ─────────────────────────────────
+  const logAudit = (
+    action: string,
+    entityType?: string,
+    entityId?: string,
+    details?: Record<string, unknown>
+  ) => {
+    // Fire-and-forget — never blocks the calling handler
+    supabase
+      .from("audit_log")
+      .insert({
+        user_id: user?.id ?? null,
+        action,
+        entity_type: entityType ?? null,
+        entity_id: entityId ?? null,
+        details: details ?? {},
+      })
+      .then(({ error }) => {
+        if (error) console.warn("[audit_log] insert failed:", error.message);
+      });
   };
 
   useEffect(() => { fetchUsers(); fetchDataSources(); }, []);
@@ -267,6 +373,11 @@ export default function Admin() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
       toast({ title: "Role updated", description: `${selectedUser.full_name}'s role changed to ${newRole}.` });
+      logAudit("user.role_change", "user", selectedUser.id, {
+        from_role: selectedUser.role,
+        to_role: newRole,
+        target_user: selectedUser.full_name,
+      });
       fetchUsers();
     }
     setRoleDialogOpen(false);
@@ -286,6 +397,12 @@ export default function Admin() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
       toast({ title: u.is_active ? "User deactivated" : "User activated" });
+      logAudit(
+        u.is_active ? "user.deactivate" : "user.activate",
+        "user",
+        u.id,
+        { target_user: u.full_name }
+      );
       fetchUsers();
     }
   };
@@ -331,10 +448,12 @@ export default function Admin() {
       const { error } = await supabase.from("data_sources").insert(payload as any);
       if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
       toast({ title: "Data source added" });
+      logAudit("source.create", "data_source", undefined, { name: sourceForm.name, module_type: sourceForm.module_type });
     } else if (editSource) {
       const { error } = await supabase.from("data_sources").update(payload as any).eq("id", editSource.id);
       if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
       toast({ title: "Data source updated" });
+      logAudit("source.update", "data_source", editSource.id, { name: sourceForm.name });
     }
     setSourceDialogOpen(false);
     fetchDataSources();
@@ -342,7 +461,16 @@ export default function Admin() {
 
   const toggleSourceStatus = async (ds: DataSource) => {
     const newStatus = ds.status === "active" ? "inactive" : "active";
-    await supabase.from("data_sources").update({ status: newStatus } as any).eq("id", ds.id);
+    const { error } = await supabase.from("data_sources").update({ status: newStatus } as any).eq("id", ds.id);
+    if (error) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+      return;
+    }
+    logAudit("source.status_change", "data_source", ds.id, {
+      name: ds.name,
+      from_status: ds.status,
+      to_status: newStatus,
+    });
     fetchDataSources();
   };
 
@@ -673,6 +801,8 @@ export default function Admin() {
                   <SelectItem value="evaluation">Evaluations</SelectItem>
                   <SelectItem value="supplier">Suppliers</SelectItem>
                   <SelectItem value="report">Reports</SelectItem>
+                  <SelectItem value="user">Users</SelectItem>
+                  <SelectItem value="source">Data Sources</SelectItem>
                 </SelectContent>
               </Select>
             </CardHeader>
@@ -715,22 +845,22 @@ export default function Admin() {
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {[
-                  { name: "Lovable Cloud", status: "connected", subtitle: "Database & Auth", icon: Cloud },
-                  { name: "MongoDB", status: "not_configured", subtitle: "Document store", icon: Database },
-                  { name: "FireCrawl", status: "not_configured", subtitle: "Web scraping", icon: Server },
-                  { name: "AI/ML API", status: "not_configured", subtitle: "AI models", icon: Zap },
-                  { name: "Azure Functions", status: "not_configured", subtitle: "Backend processing", icon: Activity },
-                ].map(svc => (
+                {healthChecks.map(svc => (
                   <div key={svc.name} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
                     <svc.icon className="h-5 w-5 text-muted-foreground" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{svc.name}</p>
-                      <p className="text-xs text-muted-foreground">{svc.subtitle}</p>
+                      <p className="text-xs text-muted-foreground">{svc.detail ?? svc.subtitle}</p>
                     </div>
-                    <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                      svc.status === "connected" ? "bg-risk-low" : "bg-muted-foreground/40"
-                    }`} />
+                    {svc.status === "checking" ? (
+                      <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+                    ) : (
+                      <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                        svc.status === "ok"    ? "bg-risk-low" :
+                        svc.status === "error" ? "bg-destructive" :
+                        "bg-muted-foreground/40"
+                      }`} />
+                    )}
                   </div>
                 ))}
               </div>
