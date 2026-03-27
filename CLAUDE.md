@@ -155,7 +155,7 @@ curl -s -x http://internet.cetin:8080 -X POST \
 20260320000001  — supplier_financial_snapshots + evaluation_financial_links
 20260327000001  — fix create_evaluation: remove ::text cast on audit_log entity_id (uuid column mismatch)
 20260327000002  — ref_countries, ref_sectors, ref_prompts reference tables + RLS + seed data
-20260327000003  — ALTER TYPE user_role ADD VALUE 'plebian' (dashboard-only role)
+20260327000003  — ALTER TYPE app_role ADD VALUE 'plebian' (dashboard-only role)
 ```
 
 ### Live DB Changes (applied directly, 2026-03-27)
