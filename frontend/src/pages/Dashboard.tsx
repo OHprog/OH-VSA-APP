@@ -106,7 +106,7 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 export default function Dashboard() {
-  const { profile } = useAuth();
+  const { profile, isPlebian } = useAuth();
   const { prompts: suggestedPrompts } = useReferenceData();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -432,8 +432,8 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* AI Analyst Chat */}
-      <Card className="gradient-card border-border/50">
+      {/* AI Analyst Chat — hidden for plebian role */}
+      {!isPlebian && <Card className="gradient-card border-border/50">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
           <div className="flex items-center gap-2">
             <div className="rounded-md p-1.5 bg-accent/10">
@@ -536,7 +536,7 @@ export default function Dashboard() {
             </Button>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Recent Evaluations */}
       <Card className="gradient-card border-border/50">
