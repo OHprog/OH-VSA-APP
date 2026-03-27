@@ -27,6 +27,7 @@ interface Supplier {
   id: string;
   company_name: string;
   ico: string | null;
+  dic: string | null;
   country: string | null;
   city: string | null;
   address: string | null;
@@ -46,6 +47,7 @@ interface Supplier {
 interface SupplierForm {
   company_name: string;
   ico: string;
+  dic: string;
   country: string;
   city: string;
   address: string;
@@ -56,7 +58,7 @@ interface SupplierForm {
 }
 
 const emptyForm: SupplierForm = {
-  company_name: "", ico: "", country: "CZ", city: "", address: "", sector: "", website_url: "", notes: "", parent_id: null,
+  company_name: "", ico: "", dic: "", country: "CZ", city: "", address: "", sector: "", website_url: "", notes: "", parent_id: null,
 };
 
 export default function Suppliers() {
@@ -130,6 +132,7 @@ export default function Suppliers() {
         organization_id: profile.organization_id,
         company_name: form.company_name,
         ico: form.ico || null,
+        dic: form.dic || null,
         country: form.country || null,
         city: form.city || null,
         address: form.address || null,
@@ -158,6 +161,7 @@ export default function Suppliers() {
     setForm({
       company_name: s.company_name,
       ico: s.ico || "",
+      dic: s.dic || "",
       country: s.country || "CZ",
       city: s.city || "",
       address: s.address || "",
@@ -179,6 +183,7 @@ export default function Suppliers() {
       const { error } = await supabase.from("suppliers").update({
         company_name: form.company_name,
         ico: form.ico || null,
+        dic: form.dic || null,
         country: form.country || null,
         city: form.city || null,
         address: form.address || null,
@@ -252,7 +257,11 @@ export default function Suppliers() {
                       <Input value={form.ico} onChange={(e) => setForm({ ...form, ico: e.target.value })} placeholder="12345678" maxLength={8} pattern="\d{8}" />
                     </div>
                   )}
-                  <div className={`space-y-2 ${form.country !== "CZ" ? "col-span-2" : ""}`}>
+                  <div className="space-y-2">
+                    <Label>{form.country === "CZ" ? "DIČ (VAT)" : "VAT Number"}</Label>
+                    <Input value={form.dic} onChange={(e) => setForm({ ...form, dic: e.target.value })} placeholder={form.country === "CZ" ? "CZ12345678" : "e.g. DE123456789"} />
+                  </div>
+                  <div className={`space-y-2 ${form.country === "CZ" ? "col-span-2" : ""}`}>
                     <Label>Country</Label>
                     <Select value={form.country} onValueChange={(v) => setForm({ ...form, country: v, ico: v !== "CZ" ? "" : form.ico })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
@@ -351,7 +360,11 @@ export default function Suppliers() {
                   <Input value={form.ico} onChange={(e) => setForm({ ...form, ico: e.target.value })} placeholder="12345678" maxLength={8} pattern="\d{8}" />
                 </div>
               )}
-              <div className={`space-y-2 ${form.country !== "CZ" ? "col-span-2" : ""}`}>
+              <div className="space-y-2">
+                <Label>{form.country === "CZ" ? "DIČ (VAT)" : "VAT Number"}</Label>
+                <Input value={form.dic} onChange={(e) => setForm({ ...form, dic: e.target.value })} placeholder={form.country === "CZ" ? "CZ12345678" : "e.g. DE123456789"} />
+              </div>
+              <div className={`space-y-2 ${form.country === "CZ" ? "col-span-2" : ""}`}>
                 <Label>Country</Label>
                 <Select value={form.country} onValueChange={(v) => setForm({ ...form, country: v, ico: v !== "CZ" ? "" : form.ico })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -449,6 +462,7 @@ export default function Suppliers() {
                 <tr className="border-b text-muted-foreground">
                   <th className="text-left p-4 font-medium">Company Name</th>
                   <th className="text-left p-4 font-medium">IČO</th>
+                  <th className="text-left p-4 font-medium">DIČ / VAT</th>
                   <th className="text-left p-4 font-medium">Country</th>
                   <th className="text-left p-4 font-medium">Sector</th>
                   <th className="text-left p-4 font-medium">Parent / Subs</th>
@@ -463,6 +477,7 @@ export default function Suppliers() {
                     <tr key={i} className="border-b">
                       <td className="p-4"><Skeleton className="h-4 w-32" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-20" /></td>
+                      <td className="p-4"><Skeleton className="h-4 w-20" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-8" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-16" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-24" /></td>
@@ -473,7 +488,7 @@ export default function Suppliers() {
                   ))
                 ) : suppliers.length === 0 ? (
                   <tr>
-                    <td colSpan={canEdit ? 8 : 7} className="p-12 text-center">
+                    <td colSpan={canEdit ? 9 : 8} className="p-12 text-center">
                       <Building2 className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
                       <p className="text-muted-foreground">No suppliers found</p>
                     </td>
@@ -482,7 +497,8 @@ export default function Suppliers() {
                   suppliers.map((s) => (
                     <tr key={s.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
                       <td className="p-4 font-medium">{s.company_name}</td>
-                      <td className="p-4 text-muted-foreground font-mono text-xs">{s.ico}</td>
+                      <td className="p-4 text-muted-foreground font-mono text-xs">{s.ico ?? "—"}</td>
+                      <td className="p-4 text-muted-foreground font-mono text-xs">{s.dic ?? "—"}</td>
                       <td className="p-4">{s.country}</td>
                       <td className="p-4 text-muted-foreground">{s.sector}</td>
                       <td className="p-4 text-sm">
