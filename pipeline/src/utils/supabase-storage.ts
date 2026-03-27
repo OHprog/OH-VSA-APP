@@ -136,15 +136,22 @@ export async function updateScrapeRunSummaries(
   }
 }
 
+// Cost rates (USD)
+const COST_PER_TOKEN: Record<string, number> = {
+  aiml: 0.30 / 1_000_000,   // gpt-4o-mini blended $0.30/1M tokens
+  openai: 0.30 / 1_000_000,
+};
+const FIRECRAWL_COST_PER_REQUEST = 0.01; // $0.01 per scrape
+
 /**
  * Upsert today's Firecrawl scrape count into api_usage.
- * Tracks one scrape session per evaluation regardless of article yield.
+ * Aggregates into a single row per day; recalculates cost_estimate on every update.
  */
 export async function trackFirecrawlUsage(requestCount: number): Promise<void> {
   if (requestCount <= 0) return;
 
   const supabase = getSupabase();
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const today = new Date().toISOString().slice(0, 10);
 
   const { data: existing } = await supabase
     .from('api_usage')
@@ -152,12 +159,18 @@ export async function trackFirecrawlUsage(requestCount: number): Promise<void> {
     .eq('service', 'firecrawl')
     .eq('endpoint', 'scrape')
     .eq('date', today)
+    .order('created_at', { ascending: true })
+    .limit(1)
     .maybeSingle();
 
   if (existing) {
+    const newCount = existing.request_count + requestCount;
     await supabase
       .from('api_usage')
-      .update({ request_count: existing.request_count + requestCount })
+      .update({
+        request_count: newCount,
+        cost_estimate: newCount * FIRECRAWL_COST_PER_REQUEST,
+      })
       .eq('id', existing.id);
   } else {
     await supabase.from('api_usage').insert({
@@ -165,6 +178,7 @@ export async function trackFirecrawlUsage(requestCount: number): Promise<void> {
       endpoint: 'scrape',
       request_count: requestCount,
       tokens_used: 0,
+      cost_estimate: requestCount * FIRECRAWL_COST_PER_REQUEST,
       date: today,
     });
   }
@@ -172,13 +186,14 @@ export async function trackFirecrawlUsage(requestCount: number): Promise<void> {
 
 /**
  * Upsert today's AI/ML API token usage into api_usage.
- * Call after each LLM completion response with response.usage.total_tokens.
+ * Aggregates into a single row per service per day; calculates cost_estimate from tokens.
  */
 export async function trackApiUsage(service: string, tokens: number): Promise<void> {
   if (tokens <= 0) return;
 
   const supabase = getSupabase();
   const today = new Date().toISOString().slice(0, 10);
+  const ratePerToken = COST_PER_TOKEN[service] ?? COST_PER_TOKEN['aiml'];
 
   const { data: existing } = await supabase
     .from('api_usage')
@@ -186,14 +201,18 @@ export async function trackApiUsage(service: string, tokens: number): Promise<vo
     .eq('service', service)
     .eq('endpoint', 'chat')
     .eq('date', today)
+    .order('created_at', { ascending: true })
+    .limit(1)
     .maybeSingle();
 
   if (existing) {
+    const newTokens = existing.tokens_used + tokens;
     await supabase
       .from('api_usage')
       .update({
         request_count: existing.request_count + 1,
-        tokens_used: existing.tokens_used + tokens,
+        tokens_used: newTokens,
+        cost_estimate: newTokens * ratePerToken,
       })
       .eq('id', existing.id);
   } else {
@@ -202,6 +221,7 @@ export async function trackApiUsage(service: string, tokens: number): Promise<vo
       endpoint: 'chat',
       request_count: 1,
       tokens_used: tokens,
+      cost_estimate: tokens * ratePerToken,
       date: today,
     });
   }
