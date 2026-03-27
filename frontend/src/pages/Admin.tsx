@@ -80,6 +80,23 @@ interface ServiceHealth {
   detail?: string;
 }
 
+interface FirecrawlCredits {
+  account: {
+    remaining_credits: number;
+    plan_credits: number;
+    billing_period_start: string | null;
+    billing_period_end: string | null;
+  } | null;
+  last_30_days: {
+    total_runs: number;
+    total_sources: number;
+    total_articles_found: number;
+    total_articles_stored: number;
+    completed: number;
+    failed: number;
+  };
+}
+
 // ─── Helpers ─────────────────────────────────────────────
 const MODULE_LABELS: Record<string, string> = {
   financial: "Financial",
@@ -164,6 +181,7 @@ export default function Admin() {
   const [systemLoading, setSystemLoading] = useState(true);
   const [actionFilter, setActionFilter] = useState("all");
   const [healthChecks, setHealthChecks] = useState<ServiceHealth[]>([]);
+  const [firecrawlCredits, setFirecrawlCredits] = useState<FirecrawlCredits | null>(null);
 
   // ─── Fetch Users ─────────────────────────────────────
   const fetchUsers = async () => {
@@ -269,6 +287,13 @@ export default function Admin() {
       user_name: l.user_id ? nameMap.get(l.user_id) ?? "Unknown" : null,
     })));
     setSystemLoading(false);
+
+    // Fetch Firecrawl credits from pipeline (async, non-blocking)
+    const pipelineUrl = import.meta.env.VITE_PIPELINE_URL ?? "https://vsa-pipeline.azurewebsites.net";
+    fetch(`${pipelineUrl}/firecrawl-credits`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: FirecrawlCredits | null) => { if (data) setFirecrawlCredits(data); })
+      .catch(() => {/* credits panel stays hidden */});
 
     // Run health checks after data load (async, updates health panel independently)
     runHealthChecks(supabaseOk);
@@ -791,6 +816,46 @@ export default function Admin() {
               <CardContent className="p-8 text-center">
                 <Zap className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                 <p className="text-sm text-muted-foreground">No API usage recorded yet. Usage tracking begins when evaluation modules run.</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Firecrawl Credits */}
+          {firecrawlCredits && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Firecrawl Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Remaining Credits</p>
+                    <p className="text-2xl font-bold mt-1">
+                      {firecrawlCredits.account?.remaining_credits.toLocaleString() ?? "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Scrape Runs (30d)</p>
+                    <p className="text-2xl font-bold mt-1">{firecrawlCredits.last_30_days.total_runs}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Articles Found (30d)</p>
+                    <p className="text-2xl font-bold mt-1">{firecrawlCredits.last_30_days.total_articles_found.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Success / Failed</p>
+                    <p className="text-2xl font-bold mt-1">
+                      <span className="text-risk-low">{firecrawlCredits.last_30_days.completed}</span>
+                      <span className="text-muted-foreground text-base"> / </span>
+                      <span className="text-risk-high">{firecrawlCredits.last_30_days.failed}</span>
+                    </p>
+                  </div>
+                </div>
+                {firecrawlCredits.account?.billing_period_start && (
+                  <p className="text-xs text-muted-foreground mt-3">
+                    Billing period: {firecrawlCredits.account.billing_period_start} → {firecrawlCredits.account.billing_period_end}
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}

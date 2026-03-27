@@ -386,6 +386,54 @@ async function recoverStaleEvaluations(): Promise<void> {
 }
 
 // ============================================================
+// GET /firecrawl-credits
+// Returns Firecrawl account credit balance + our 30-day scrape stats from Supabase.
+// ============================================================
+
+app.get('/firecrawl-credits', async (_req, res) => {
+  try {
+    const fcKey = process.env.FIRECRAWL_API_KEY;
+    if (!fcKey) return res.status(503).json({ error: 'FIRECRAWL_API_KEY not configured' });
+
+    // Fetch account balance from Firecrawl
+    const fcRes = await fetch('https://api.firecrawl.dev/v1/team/credit-usage?days=30', {
+      headers: { Authorization: `Bearer ${fcKey}` },
+    });
+    const fcData = (await fcRes.json()) as {
+      success: boolean;
+      data?: { remaining_credits: number; plan_credits: number; billing_period_start: string | null; billing_period_end: string | null };
+    };
+
+    // Fetch our own 30-day scrape run stats from Supabase
+    const supabase = getSupabase();
+    const { data: runs } = await supabase
+      .from('firecrawl_scrape_runs')
+      .select('created_at, sources_scraped, articles_found, articles_stored, status, duration_ms')
+      .gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString());
+
+    const stats = (runs ?? []).reduce(
+      (acc, r) => {
+        acc.total_runs++;
+        acc.total_sources += r.sources_scraped ?? 0;
+        acc.total_articles_found += r.articles_found ?? 0;
+        acc.total_articles_stored += r.articles_stored ?? 0;
+        if (r.status === 'completed') acc.completed++;
+        if (r.status === 'failed') acc.failed++;
+        return acc;
+      },
+      { total_runs: 0, total_sources: 0, total_articles_found: 0, total_articles_stored: 0, completed: 0, failed: 0 }
+    );
+
+    res.json({
+      account: fcData.success ? fcData.data : null,
+      last_30_days: stats,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // Start server
 // ============================================================
 
