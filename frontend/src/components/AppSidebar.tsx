@@ -39,7 +39,7 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const navigate = useNavigate();
-  const { profile, role, signOut, isAdmin } = useAuth();
+  const { user, profile, role, signOut, isAdmin } = useAuth();
   const [errorSourceCount, setErrorSourceCount] = useState(0);
 
   useEffect(() => {
@@ -56,8 +56,9 @@ export function AppSidebar() {
     navigate("/login");
   };
 
-  const initials = profile?.full_name
-    ? profile.full_name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
+  const displayName = profile?.full_name || user?.user_metadata?.full_name || null;
+  const initials = displayName
+    ? displayName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
     : "U";
 
   return (
@@ -135,7 +136,7 @@ export function AppSidebar() {
           {!collapsed && (
             <div className="flex flex-1 flex-col overflow-hidden">
               <span className="truncate text-xs font-medium text-sidebar-accent-foreground">
-                {profile?.full_name || "User"}
+                {displayName || "User"}
               </span>
               <span className="truncate text-[10px] text-sidebar-foreground/60 capitalize">
                 {role || "viewer"}

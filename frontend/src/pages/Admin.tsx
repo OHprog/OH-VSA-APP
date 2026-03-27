@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/table";
 import {
   Users, Database, Activity, UserPlus, Copy, Check, Pencil, Plus,
-  AlertCircle, CheckCircle2, Circle, ExternalLink, Server, Zap, Cloud, Loader2,
+  AlertCircle, CheckCircle2, Circle, ExternalLink, Server, Zap, Cloud, Loader2, RefreshCw,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -552,7 +552,21 @@ export default function Admin() {
           {/* Users Table */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Users</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium">Users ({users.length})</CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={fetchUsers}
+                  disabled={usersLoading}
+                  className="gap-1.5 h-7 px-2 text-xs"
+                >
+                  {usersLoading
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <RefreshCw className="h-3.5 w-3.5" />}
+                  Refresh
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {usersLoading ? (

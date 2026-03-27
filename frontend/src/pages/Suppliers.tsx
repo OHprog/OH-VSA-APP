@@ -205,8 +205,16 @@ export default function Suppliers() {
   const handleDelete = async () => {
     if (!deleteId) return;
     try {
-      const { error } = await supabase.from("suppliers").delete().eq("id", deleteId);
+      const { data: deleted, error } = await supabase
+        .from("suppliers")
+        .delete()
+        .eq("id", deleteId)
+        .select("id");
       if (error) throw error;
+      if (!deleted || deleted.length === 0) {
+        throw new Error("Could not delete supplier. You may not have permission, or the record has linked data.");
+      }
+      setSuppliers((prev) => prev.filter((s) => s.id !== deleteId));
       toast({ title: "Supplier deleted" });
       fetchSuppliers();
     } catch (err: any) {
