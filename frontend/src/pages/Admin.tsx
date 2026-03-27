@@ -131,6 +131,7 @@ const ROLE_COLORS: Record<string, string> = {
   admin: "bg-primary/10 text-primary border-primary/20",
   analyst: "bg-accent/10 text-accent border-accent/20",
   viewer: "bg-muted text-muted-foreground border-border",
+  plebian: "bg-orange-500/10 text-orange-600 border-orange-500/20",
 };
 
 const SERVICE_COLORS: Record<string, string> = {
@@ -956,6 +957,7 @@ export default function Admin() {
               <SelectItem value="admin">Admin</SelectItem>
               <SelectItem value="analyst">Analyst</SelectItem>
               <SelectItem value="viewer">Viewer</SelectItem>
+              <SelectItem value="plebian">Plebian</SelectItem>
             </SelectContent>
           </Select>
           <DialogFooter>

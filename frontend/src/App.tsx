@@ -38,6 +38,12 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function DashboardOnlyRoute({ children }: { children: React.ReactNode }) {
+  const { isPlebian } = useAuth();
+  if (isPlebian) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -50,12 +56,12 @@ const App = () => (
             <Route path="/register" element={<Register />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/suppliers" element={<ProtectedRoute><Suppliers /></ProtectedRoute>} />
-            <Route path="/evaluations/new" element={<ProtectedRoute><NewEvaluation /></ProtectedRoute>} />
-            <Route path="/evaluations/:id" element={<ProtectedRoute><EvaluationDetail /></ProtectedRoute>} />
-            <Route path="/evaluations" element={<ProtectedRoute><Evaluations /></ProtectedRoute>} />
-            <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-            <Route path="/admin" element={<ProtectedRoute><AdminRoute><Admin /></AdminRoute></ProtectedRoute>} />
+            <Route path="/suppliers" element={<ProtectedRoute><DashboardOnlyRoute><Suppliers /></DashboardOnlyRoute></ProtectedRoute>} />
+            <Route path="/evaluations/new" element={<ProtectedRoute><DashboardOnlyRoute><NewEvaluation /></DashboardOnlyRoute></ProtectedRoute>} />
+            <Route path="/evaluations/:id" element={<ProtectedRoute><DashboardOnlyRoute><EvaluationDetail /></DashboardOnlyRoute></ProtectedRoute>} />
+            <Route path="/evaluations" element={<ProtectedRoute><DashboardOnlyRoute><Evaluations /></DashboardOnlyRoute></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute><DashboardOnlyRoute><Reports /></DashboardOnlyRoute></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><DashboardOnlyRoute><AdminRoute><Admin /></AdminRoute></DashboardOnlyRoute></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

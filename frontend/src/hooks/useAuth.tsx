@@ -10,6 +10,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   isAnalyst: boolean;
+  isPlebian: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -23,6 +24,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   isAdmin: false,
   isAnalyst: false,
+  isPlebian: false,
   signIn: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
   signOut: async () => {},
@@ -104,9 +106,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAdmin = role === "admin";
   const isAnalyst = role === "analyst";
+  const isPlebian = role === "plebian";
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, role, loading, isAdmin, isAnalyst, signIn, signUp, signOut: signOutFn }}>
+    <AuthContext.Provider value={{ user, session, profile, role, loading, isAdmin, isAnalyst, isPlebian, signIn, signUp, signOut: signOutFn }}>
       {children}
     </AuthContext.Provider>
   );

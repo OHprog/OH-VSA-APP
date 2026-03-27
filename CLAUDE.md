@@ -112,7 +112,7 @@ curl -s -x http://internet.cetin:8080 -X POST \
 | `evaluations` | table | Risk assessments; `overall_risk_level` is an enum stored **lowercase** |
 | `evaluation_modules` | table | Per-module results; status: queued → running → completed/failed |
 | `data_sources` | table | 20 active sources (news, registries, sanctions) |
-| `user_roles` | table | `admin`, `analyst`, `viewer` — app-level roles |
+| `user_roles` | table | `admin`, `analyst`, `viewer`, `plebian` — app-level roles |
 | `profiles` | table | User display names, `is_active` flag |
 | `dashboard_stats` | view | Aggregate stats — uses `security_invoker = off` + `overall_risk_level::text` cast |
 | `evaluation_list` | view | Joined eval+supplier view — uses `security_invoker = off` |
@@ -155,6 +155,7 @@ curl -s -x http://internet.cetin:8080 -X POST \
 20260320000001  — supplier_financial_snapshots + evaluation_financial_links
 20260327000001  — fix create_evaluation: remove ::text cast on audit_log entity_id (uuid column mismatch)
 20260327000002  — ref_countries, ref_sectors, ref_prompts reference tables + RLS + seed data
+20260327000003  — ALTER TYPE user_role ADD VALUE 'plebian' (dashboard-only role)
 ```
 
 ### Live DB Changes (applied directly, 2026-03-27)
@@ -167,6 +168,18 @@ Not in migration files — applied via Management API:
 - Deleted seed duplicate suppliers (CETIN a.s. + T-Mobile with `b0000000-...` IDs, 0 evals)
 - Supabase `site_url` updated to `https://agreeable-pebble-0e9fcc610.6.azurestaticapps.net`
 - Google OAuth enabled (client: `852152171579-bk23u4tl309aued3ble5cn3acralj4l3.apps.googleusercontent.com`)
+- `user_role` enum extended with `plebian` (dashboard-only access); applied via migration `20260327000003` — **must be run in Supabase SQL editor if Management API token is unavailable**
+
+## Roles Summary
+
+| Role | Access |
+|------|--------|
+| `admin` | Full access including Admin portal |
+| `analyst` | All pages except Admin |
+| `viewer` | All pages except Admin |
+| `plebian` | Dashboard only — all other routes redirect to `/` |
+
+`DashboardOnlyRoute` wrapper in `App.tsx` enforces plebian restriction. Sidebar hides non-Dashboard nav items for plebian users.
 
 ---
 
@@ -184,7 +197,7 @@ Not in migration files — applied via Management API:
 - [NewEvaluation.tsx](frontend/src/pages/NewEvaluation.tsx) — Calls `create_evaluation` RPC; countries+sectors from DB
 - [Login.tsx](frontend/src/pages/Login.tsx) — Email + Google OAuth sign-in
 - [Register.tsx](frontend/src/pages/Register.tsx) — Email + Google OAuth sign-up
-- [useAuth.tsx](frontend/src/hooks/useAuth.tsx) — Auth context; `isAdmin` = role from `user_roles` table
+- [useAuth.tsx](frontend/src/hooks/useAuth.tsx) — Auth context; `isAdmin`, `isAnalyst`, `isPlebian` flags from `user_roles` table
 - [useReferenceData.ts](frontend/src/hooks/useReferenceData.ts) — Fetches ref_countries, ref_sectors, ref_prompts; module-level cache
 
 ## Organisations (IMPORTANT)

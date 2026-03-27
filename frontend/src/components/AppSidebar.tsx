@@ -39,7 +39,7 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const navigate = useNavigate();
-  const { user, profile, role, signOut, isAdmin } = useAuth();
+  const { user, profile, role, signOut, isAdmin, isPlebian } = useAuth();
   const [errorSourceCount, setErrorSourceCount] = useState(0);
 
   useEffect(() => {
@@ -83,7 +83,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navItems.map((item) => (
+              {(isPlebian ? navItems.slice(0, 1) : navItems).map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink
