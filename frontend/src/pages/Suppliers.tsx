@@ -17,6 +17,9 @@ const sectors = ["Telecom", "Construction", "IT", "Energy", "Logistics", "Other"
 const countries = [
   { code: "CZ", name: "Czech Republic" },
   { code: "SK", name: "Slovakia" },
+  { code: "HU", name: "Hungary" },
+  { code: "RS", name: "Serbia" },
+  { code: "BG", name: "Bulgaria" },
   { code: "DE", name: "Germany" },
   { code: "AT", name: "Austria" },
   { code: "PL", name: "Poland" },
