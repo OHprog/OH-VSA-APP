@@ -12,19 +12,7 @@ import { Plus, Search, Pencil, Trash2, Building2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-
-const sectors = ["Telecom", "Construction", "IT", "Energy", "Logistics", "Other"];
-const countries = [
-  { code: "CZ", name: "Czech Republic" },
-  { code: "SK", name: "Slovakia" },
-  { code: "HU", name: "Hungary" },
-  { code: "RS", name: "Serbia" },
-  { code: "BG", name: "Bulgaria" },
-  { code: "DE", name: "Germany" },
-  { code: "AT", name: "Austria" },
-  { code: "PL", name: "Poland" },
-  { code: "INT", name: "International / Other" },
-];
+import { useReferenceData } from "@/hooks/useReferenceData";
 
 interface Supplier {
   id: string;
@@ -79,6 +67,7 @@ export default function Suppliers() {
   const [parentDropdownOpen, setParentDropdownOpen] = useState(false);
   const { role, isAdmin, isAnalyst, user, profile } = useAuth();
   const { toast } = useToast();
+  const { countries, sectors } = useReferenceData();
   const canEdit = isAdmin || isAnalyst;
 
   const fetchSuppliers = useCallback(async () => {
@@ -286,7 +275,7 @@ export default function Suppliers() {
                     <Select value={form.sector} onValueChange={(v) => setForm({ ...form, sector: v })}>
                       <SelectTrigger><SelectValue placeholder="Select sector" /></SelectTrigger>
                       <SelectContent>
-                        {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                        {sectors.map((s) => <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>

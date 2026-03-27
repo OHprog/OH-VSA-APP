@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { useReferenceData } from "@/hooks/useReferenceData";
 import { StatusBadge } from "@/components/StatusBadge";
 import { RiskBadge } from "@/components/RiskBadge";
 import { useNavigate } from "react-router-dom";
@@ -63,11 +64,6 @@ const INITIAL_CHAT: ChatMessage[] = [
   },
 ];
 
-const SUGGESTED_PROMPTS = [
-  "Which suppliers have the highest risk?",
-  "Summarize the portfolio health",
-  "What does the financial module measure?",
-];
 
 const statIcons = [Building2, ClipboardList, FileBarChart, AlertTriangle];
 
@@ -111,6 +107,7 @@ function CustomTooltip({ active, payload, label }: any) {
 
 export default function Dashboard() {
   const { profile } = useAuth();
+  const { prompts: suggestedPrompts } = useReferenceData();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -506,13 +503,13 @@ export default function Dashboard() {
           {/* Suggested prompts — only before first user message */}
           {chatMessages.length === 1 && !chatLoading && (
             <div className="flex flex-wrap gap-2">
-              {SUGGESTED_PROMPTS.map((prompt) => (
+              {suggestedPrompts.map((p) => (
                 <button
-                  key={prompt}
-                  onClick={() => sendMessage(prompt)}
+                  key={p.id}
+                  onClick={() => sendMessage(p.prompt)}
                   className="text-xs rounded-full border border-border/60 px-3 py-1.5 text-muted-foreground hover:text-accent hover:border-accent/40 hover:bg-accent/5 transition-colors"
                 >
-                  {prompt}
+                  {p.prompt}
                 </button>
               ))}
             </div>

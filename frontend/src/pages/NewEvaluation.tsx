@@ -13,6 +13,7 @@ import { moduleTypes } from "@/data/mockData";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { useReferenceData } from "@/hooks/useReferenceData";
 import { ArrowLeft, ArrowRight, Rocket, Search, Plus, Check } from "lucide-react";
 
 interface SupplierResult {
@@ -23,16 +24,6 @@ interface SupplierResult {
   country: string | null;
   parent_company_name?: string | null;
 }
-
-const sectors = ["Telecom", "Construction", "IT", "Energy", "Logistics", "Other"];
-const countries = [
-  { code: "CZ", name: "Czech Republic" },
-  { code: "SK", name: "Slovakia" },
-  { code: "DE", name: "Germany" },
-  { code: "AT", name: "Austria" },
-  { code: "PL", name: "Poland" },
-  { code: "INT", name: "International / Other" },
-];
 
 const steps = ["Select Supplier", "Choose Modules", "Review & Launch"];
 
@@ -53,6 +44,7 @@ export default function NewEvaluation() {
   const [searchParams] = useSearchParams();
   const { isAdmin, isAnalyst, user, profile } = useAuth();
   const { toast } = useToast();
+  const { countries, sectors } = useReferenceData();
 
   // Auto-select supplier from ?supplier_id query param (used by "Evaluate Parent" flow)
   useEffect(() => {
@@ -317,7 +309,7 @@ export default function NewEvaluation() {
               <Select value={quickForm.sector} onValueChange={(v) => setQuickForm({ ...quickForm, sector: v })}>
                 <SelectTrigger><SelectValue placeholder="Select sector" /></SelectTrigger>
                 <SelectContent>
-                  {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {sectors.map((s) => <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
