@@ -127,6 +127,7 @@ export const moduleTypes = [
     description: "Internal questionnaire results and feedback",
     estimatedTime: "~1 min",
     sources: ["Internal Survey", "Feedback DB"],
+    disabled: true,
   },
 ];
 

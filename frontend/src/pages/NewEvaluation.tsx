@@ -95,12 +95,14 @@ export default function NewEvaluation() {
   }, [searchTerm, searchSuppliers]);
 
   const toggleModule = (key: string) => {
+    const mod = moduleTypes.find((m) => m.key === key);
+    if (mod?.disabled) return;
     setSelectedModules((prev) =>
       prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]
     );
   };
 
-  const selectAll = () => setSelectedModules(moduleTypes.map((m) => m.key));
+  const selectAll = () => setSelectedModules(moduleTypes.filter((m) => !m.disabled).map((m) => m.key));
   const deselectAll = () => setSelectedModules([]);
 
   const handleLaunch = async () => {
@@ -339,18 +341,23 @@ export default function NewEvaluation() {
               return (
                 <Card
                   key={mod.key}
-                  className={`cursor-pointer transition-all hover:shadow-md ${
-                    selected ? "border-accent ring-1 ring-accent/30 bg-accent/5" : ""
+                  className={`transition-all ${
+                    mod.disabled
+                      ? "opacity-40 cursor-not-allowed"
+                      : `cursor-pointer hover:shadow-md ${selected ? "border-accent ring-1 ring-accent/30 bg-accent/5" : ""}`
                   }`}
                   onClick={() => toggleModule(mod.key)}
                 >
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
-                      <Checkbox checked={selected} className="mt-0.5" />
+                      <Checkbox checked={selected} disabled={mod.disabled} className="mt-0.5" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-lg">{mod.icon}</span>
                           <span className="font-medium text-sm">{mod.name}</span>
+                          {mod.disabled && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Coming soon</Badge>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground mb-2">{mod.description}</p>
                         <div className="flex items-center gap-2 text-[10px]">
