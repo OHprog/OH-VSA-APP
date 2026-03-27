@@ -152,18 +152,44 @@ curl -s -x http://internet.cetin:8080 -X POST \
 20260304000003  — firecrawl_scrape_runs + firecrawl_articles tables
 20260304000004  — source_summaries JSONB column on firecrawl_scrape_runs
 20260309000001  — on_evaluation_insert DB trigger → run-evaluation Edge Function
+20260320000001  — supplier_financial_snapshots + evaluation_financial_links
+20260327000001  — fix create_evaluation: remove ::text cast on audit_log entity_id (uuid column mismatch)
+20260327000002  — ref_countries, ref_sectors, ref_prompts reference tables + RLS + seed data
 ```
+
+### Live DB Changes (applied directly, 2026-03-27)
+
+Not in migration files — applied via Management API:
+- `handle_new_user` trigger: pins new profiles to CETIN org `4d57d407-6306-4528-b540-68fcdfb25ac0`
+- `profiles` SELECT RLS: added `OR get_user_role() = 'admin'::user_role`
+- `api_usage` SELECT RLS: simplified to `get_user_role() = 'admin'::user_role` (rows have null org_id)
+- All suppliers, evaluations, reports migrated from CETIN Group org → CETIN org
+- Deleted seed duplicate suppliers (CETIN a.s. + T-Mobile with `b0000000-...` IDs, 0 evals)
+- Supabase `site_url` updated to `https://agreeable-pebble-0e9fcc610.6.azurestaticapps.net`
+- Google OAuth enabled (client: `852152171579-bk23u4tl309aued3ble5cn3acralj4l3.apps.googleusercontent.com`)
 
 ---
 
 ## Pipeline Key Files
-- [server.ts](pipeline/src/api/server.ts) — `/evaluate` endpoint; 90s pre-scrape timeout; modules always run even if scrape fails
+- [server.ts](pipeline/src/api/server.ts) — `/evaluate`, `/chat`, `/health`, `/firecrawl-credits` endpoints
 - [moduleEvaluator.ts](pipeline/src/evaluators/moduleEvaluator.ts) — 7 modules; use only prefetchedArticles (no per-module fallback scrape)
 - [sources.ts](pipeline/src/config/sources.ts) — All scraper configs (ARES, Insolvency, news, industry, energy)
+- [supabase-storage.ts](pipeline/src/utils/supabase-storage.ts) — trackApiUsage ($0.30/1M tokens blended), trackFirecrawlUsage ($0.01/req)
 - [.env](pipeline/.env) — Local dev secrets; corporate proxy set here for local use only
 
 ## Frontend Key Files
-- [Admin.tsx](frontend/src/pages/Admin.tsx) — Users / Data Sources / System tabs
-- [Dashboard.tsx](frontend/src/pages/Dashboard.tsx) — Stats cards, charts, recent evaluations
-- [NewEvaluation.tsx](frontend/src/pages/NewEvaluation.tsx) — Calls `create_evaluation` RPC; also fire-and-forget to `VITE_PIPELINE_URL` (redundant in prod, used for local dev only)
+- [Admin.tsx](frontend/src/pages/Admin.tsx) — Users / Data Sources / System tabs (Firecrawl credits card, api_usage chart)
+- [Dashboard.tsx](frontend/src/pages/Dashboard.tsx) — Stats cards, charts, AI chat (suggested prompts from ref_prompts)
+- [Suppliers.tsx](frontend/src/pages/Suppliers.tsx) — Supplier CRUD; includes dic/VAT field; countries+sectors from DB
+- [NewEvaluation.tsx](frontend/src/pages/NewEvaluation.tsx) — Calls `create_evaluation` RPC; countries+sectors from DB
+- [Login.tsx](frontend/src/pages/Login.tsx) — Email + Google OAuth sign-in
+- [Register.tsx](frontend/src/pages/Register.tsx) — Email + Google OAuth sign-up
 - [useAuth.tsx](frontend/src/hooks/useAuth.tsx) — Auth context; `isAdmin` = role from `user_roles` table
+- [useReferenceData.ts](frontend/src/hooks/useReferenceData.ts) — Fetches ref_countries, ref_sectors, ref_prompts; module-level cache
+
+## Organisations (IMPORTANT)
+
+Two orgs exist. All real data is in **CETIN** (`4d57d407-6306-4528-b540-68fcdfb25ac0`).
+CETIN Group (`a0000000-...`) is a legacy seed org — ignore it.
+If RLS queries return empty, check that the row's `organization_id` matches the user's org.
+`handle_new_user` trigger is pinned to CETIN org — do not change to dynamic lookup.
