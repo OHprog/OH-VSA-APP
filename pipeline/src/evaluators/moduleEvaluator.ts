@@ -4,14 +4,15 @@ import { trackApiUsage } from '../utils/supabase-storage';
 import { lookupCompanyByICO } from '../scrapers/ares';
 import { checkInsolvency } from '../scrapers/insolvency';
 import { checkEnergyLicenses } from '../scrapers/energy';
-import { scrapeNewsForSupplier } from '../scrapers/firecrawl-scraper';
+
 import { scrapeFinancialData } from '../scrapers/financial-scraper';
 import { scrapeInternationalFinancialData, fetchOpenCorporates } from '../scrapers/international-financial-scraper';
 import type { OpenCorporatesResult } from '../scrapers/international-financial-scraper';
 import { checkSanctionsList } from '../scrapers/sanctions-scraper';
+import { checkHlidacStatu } from '../scrapers/hlidac-statu';
 import { getFinancialSnapshot, saveFinancialSnapshot, linkEvaluationToSnapshot } from '../utils/financial-storage';
 import { generateModuleSummary } from '../utils/ai-summarizer';
-import type { AresCompanyData, InsolvencyRecord, EnergyLicenseData, ScrapedArticle, FinancialSnapshot } from '../types';
+import type { AresCompanyData, ScrapedArticle, FinancialSnapshot } from '../types';
 
 // ============================================================
 // Types
@@ -169,6 +170,24 @@ async function evaluateFinancial(
   // --- Deterministic scoring ---
   const { score, scoreBreakdown, findings, sources } = computeFinancialScore(ares, snapshot);
 
+  // --- Public contract revenue indicator (Hlídač Státu) ---
+  const hlidac = await checkHlidacStatu(ico);
+  if (hlidac && hlidac.total > 0) {
+    sources.push({
+      url: `https://www.hlidacstatu.cz/hledat?q=ico:${ico}`,
+      title: 'Hlídač Státu — Czech Public Contracts Register',
+    });
+
+    const estM = (hlidac.estimatedTotalValueCZK / 1e6).toFixed(1);
+    findings.push(`Public sector contractor: ${hlidac.total.toLocaleString('cs-CZ')} contracts registered, estimated total value ~${estM}M CZK.`);
+
+    if (hlidac.byYear.length >= 2) {
+      const recent = hlidac.byYear.slice(-3);
+      const trend = recent.map((y) => `${y.year}: ${(y.totalValueCZK / 1e6).toFixed(1)}M CZK (${y.count} contracts)`).join(', ');
+      findings.push(`Recent public contract activity (sample): ${trend}.`);
+    }
+  }
+
   const aiSummary = await generateModuleSummary('financial', ares.company_name, score, scoreToRisk(score), findings, false);
 
   return {
@@ -190,6 +209,7 @@ async function evaluateFinancial(
       score_breakdown: scoreBreakdown,
       fallback_mode:   !snapshot,
       ares,
+      hlidac,
     },
   };
 }
@@ -582,9 +602,10 @@ async function evaluateCompliance(ico: string, companyName: string, country: str
     return evaluateComplianceInternational(companyName, country);
   }
 
-  const [ares, insolvency] = await Promise.all([
+  const [ares, insolvency, hlidac] = await Promise.all([
     lookupCompanyByICO(ico),
     checkInsolvency(ico),
+    checkHlidacStatu(ico),
   ]);
 
   let score = 90;
@@ -632,6 +653,36 @@ async function evaluateCompliance(ico: string, companyName: string, country: str
     }
   }
 
+  // ── Hlídač Státu — public contracts compliance risk ──────
+  if (hlidac) {
+    sources.push({
+      url: `https://www.hlidacstatu.cz/hledat?q=ico:${ico}`,
+      title: 'Hlídač Státu — Czech Public Contracts Register',
+    });
+
+    if (hlidac.total === 0) {
+      findings.push(`No public contracts found in Czech procurement registry (Hlídač Státu).`);
+    } else {
+      findings.push(`${hlidac.total.toLocaleString('cs-CZ')} public contract(s) found in Czech procurement registry.`);
+    }
+
+    if (hlidac.issueCount > 0) {
+      const types = hlidac.uniqueIssueTypes.slice(0, 3).join('; ');
+      score -= Math.min(hlidac.issueCount * 3, 15);
+      findings.push(`⚠️ ${hlidac.issueCount} flagged issue(s) on sampled contracts: ${types}.`);
+    }
+
+    if (hlidac.politicalConnectionsCount > 0) {
+      score -= 15;
+      findings.push(`⚠️ ${hlidac.politicalConnectionsCount} sampled contract(s) linked to politically active entities — elevated scrutiny recommended.`);
+    }
+
+    if (hlidac.hiddenPriceCount > 0) {
+      score -= 5;
+      findings.push(`${hlidac.hiddenPriceCount} sampled contract(s) with undisclosed price value.`);
+    }
+  }
+
   score = clamp(score, 0, 100);
 
   const aiSummary = await generateModuleSummary('compliance', companyName, score, scoreToRisk(score), findings, false);
@@ -642,7 +693,7 @@ async function evaluateCompliance(ico: string, companyName: string, country: str
     summary: aiSummary ?? buildSummary('Compliance & Legal', score, companyName, insolvency.length === 0 ? 'clean' : 'issues found'),
     findings,
     sources,
-    raw_data: { ares, insolvency },
+    raw_data: { ares, insolvency, hlidac },
   };
 }
 
