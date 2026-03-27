@@ -29,11 +29,19 @@ interface DashboardStats {
   critical_risk_count: number;
 }
 
-interface MonthlyStats {
-  month: string;
+interface ChartStats {
+  period: string;
   total_evaluations: number;
   avg_score: number;
 }
+
+type TimeFrame = "7d" | "30d" | "90d" | "12m";
+const TIME_FRAMES: { label: string; value: TimeFrame }[] = [
+  { label: "7D",  value: "7d"  },
+  { label: "30D", value: "30d" },
+  { label: "90D", value: "90d" },
+  { label: "12M", value: "12m" },
+];
 
 interface EvalListItem {
   id: string;
@@ -112,7 +120,9 @@ export default function Dashboard() {
   const { toast } = useToast();
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [monthly, setMonthly] = useState<MonthlyStats[]>([]);
+  const [chartData, setChartData] = useState<ChartStats[]>([]);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>("30d");
   const [recent, setRecent] = useState<EvalListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -125,18 +135,13 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchAll() {
       try {
-        const [statsRes, monthlyRes, recentRes] = await Promise.all([
+        const [statsRes, recentRes] = await Promise.all([
           supabase.from("dashboard_stats").select("*").maybeSingle(),
-          supabase.rpc("get_monthly_evaluation_stats", { p_months: 12 }),
           supabase.from("evaluation_list").select("*").order("created_at", { ascending: false }).limit(10),
         ]);
-
         if (statsRes.error) throw statsRes.error;
-        if (monthlyRes.error) throw monthlyRes.error;
         if (recentRes.error) throw recentRes.error;
-
         setStats(statsRes.data as DashboardStats);
-        setMonthly((monthlyRes.data as MonthlyStats[]) ?? []);
         setRecent((recentRes.data as EvalListItem[]) ?? []);
       } catch (err: any) {
         toast({ title: "Error loading dashboard", description: err.message, variant: "destructive" });
@@ -146,6 +151,35 @@ export default function Dashboard() {
     }
     fetchAll();
   }, [toast]);
+
+  useEffect(() => {
+    async function fetchChart() {
+      setChartLoading(true);
+      try {
+        if (timeFrame === "12m") {
+          const res = await supabase.rpc("get_monthly_evaluation_stats", { p_months: 12 });
+          if (res.error) throw res.error;
+          setChartData(
+            ((res.data as any[]) ?? []).map((d) => ({
+              period: d.month,
+              total_evaluations: d.total_evaluations,
+              avg_score: d.avg_score,
+            }))
+          );
+        } else {
+          const days = timeFrame === "7d" ? 7 : timeFrame === "30d" ? 30 : 90;
+          const res = await supabase.rpc("get_daily_evaluation_stats", { p_days: days });
+          if (res.error) throw res.error;
+          setChartData((res.data as ChartStats[]) ?? []);
+        }
+      } catch (err: any) {
+        toast({ title: "Error loading chart", description: err.message, variant: "destructive" });
+      } finally {
+        setChartLoading(false);
+      }
+    }
+    fetchChart();
+  }, [timeFrame, toast]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -283,18 +317,32 @@ export default function Dashboard() {
               </div>
               <CardTitle className="text-sm font-semibold">Evaluations Over Time</CardTitle>
             </div>
-            <span className="text-[11px] text-muted-foreground">Last 12 months</span>
+            <div className="flex items-center gap-1 rounded-lg border border-border/60 p-0.5">
+              {TIME_FRAMES.map((tf) => (
+                <button
+                  key={tf.value}
+                  onClick={() => setTimeFrame(tf.value)}
+                  className={`px-2.5 py-1 text-[11px] rounded-md transition-colors font-medium ${
+                    timeFrame === tf.value
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {tf.label}
+                </button>
+              ))}
+            </div>
           </CardHeader>
           <CardContent className="pt-0">
-            {loading ? (
+            {chartLoading ? (
               <Skeleton className="h-[240px] w-full rounded-lg" />
-            ) : monthly.length === 0 ? (
+            ) : chartData.length === 0 ? (
               <div className="h-[240px] flex items-center justify-center text-sm text-muted-foreground">
                 No evaluation data yet
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
-                <ComposedChart data={monthly} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
                   <defs>
                     <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="hsl(197 76% 58%)" stopOpacity={0.85} />
@@ -308,7 +356,7 @@ export default function Dashboard() {
                     strokeOpacity={0.6}
                   />
                   <XAxis
-                    dataKey="month"
+                    dataKey="period"
                     axisLine={false}
                     tickLine={false}
                     tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
