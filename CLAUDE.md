@@ -3,6 +3,8 @@
 ## What This App Does
 Supplier risk evaluation platform for CETIN a.s. Analysts search for Czech suppliers (by name or IČO), run multi-module risk assessments (financial, compliance, sanctions, market, ESG, cyber), and get scored reports. The pipeline scrapes Czech news/registries and feeds findings into evaluations stored in Supabase.
 
+> **Scoring system details:** See [`SCORING.md`](SCORING.md) — full breakdown of how each module score is calculated, weights, thresholds, and data sources.
+
 ---
 
 ## Git Repository
