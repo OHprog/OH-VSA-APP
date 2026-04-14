@@ -652,6 +652,66 @@ export type Database = {
           },
         ]
       }
+      ref_countries: {
+        Row: {
+          code: string
+          is_active: boolean
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          code: string
+          is_active?: boolean
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          code?: string
+          is_active?: boolean
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      ref_prompts: {
+        Row: {
+          id: number
+          is_active: boolean
+          prompt: string
+          sort_order: number
+        }
+        Insert: {
+          id?: number
+          is_active?: boolean
+          prompt: string
+          sort_order?: number
+        }
+        Update: {
+          id?: number
+          is_active?: boolean
+          prompt?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      ref_sectors: {
+        Row: {
+          is_active: boolean
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          is_active?: boolean
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          is_active?: boolean
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
       reports: {
         Row: {
           evaluation_id: string
@@ -709,6 +769,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      role_requests: {
+        Row: {
+          created_at: string
+          from_role: Database["public"]["Enums"]["app_role"]
+          id: string
+          reason: string | null
+          requested_role: Database["public"]["Enums"]["app_role"]
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          from_role: Database["public"]["Enums"]["app_role"]
+          id?: string
+          reason?: string | null
+          requested_role: Database["public"]["Enums"]["app_role"]
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          from_role?: Database["public"]["Enums"]["app_role"]
+          id?: string
+          reason?: string | null
+          requested_role?: Database["public"]["Enums"]["app_role"]
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       scraped_content: {
         Row: {
@@ -1042,6 +1138,14 @@ export type Database = {
         Returns: string
       }
       create_report: { Args: { p_evaluation_id: string }; Returns: string }
+      get_daily_evaluation_stats: {
+        Args: { p_days?: number }
+        Returns: {
+          avg_score: number
+          period: string
+          total_evaluations: number
+        }[]
+      }
       get_evaluation_detail: {
         Args: { p_evaluation_id: string }
         Returns: Json
@@ -1128,7 +1232,7 @@ export type Database = {
       show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
-      app_role: "admin" | "analyst" | "viewer"
+      app_role: "admin" | "analyst" | "viewer" | "visitor"
       data_source_status: "active" | "inactive" | "error"
       evaluation_status:
         | "pending"
@@ -1146,7 +1250,7 @@ export type Database = {
         | "cyber"
         | "internal"
       risk_level: "low" | "medium" | "high" | "critical"
-      user_role: "admin" | "analyst" | "viewer"
+      user_role: "admin" | "analyst" | "viewer" | "plebian"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1274,7 +1378,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "analyst", "viewer"],
+      app_role: ["admin", "analyst", "viewer", "visitor"],
       data_source_status: ["active", "inactive", "error"],
       evaluation_status: [
         "pending",
@@ -1294,7 +1398,7 @@ export const Constants = {
         "internal",
       ],
       risk_level: ["low", "medium", "high", "critical"],
-      user_role: ["admin", "analyst", "viewer"],
+      user_role: ["admin", "analyst", "viewer", "plebian"],
     },
   },
 } as const

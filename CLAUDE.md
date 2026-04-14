@@ -94,12 +94,12 @@ curl -s -x http://internet.cetin:8080 "https://mhmflwuztabcqchmxjnp.supabase.co/
 ### Management API (for secrets, functions, SQL):
 ```bash
 curl -s -x http://internet.cetin:8080 "https://api.supabase.com/v1/projects/mhmflwuztabcqchmxjnp/..." \
-  -H "Authorization: Bearer sbp_c0431d16f9c1df87b64ee74b479f55041e1db457"
+  -H "Authorization: Bearer sbp_07f5ae21a2bcd08a84e12b685fb58b452f1cde03"
 
 # Run SQL directly:
 curl -s -x http://internet.cetin:8080 -X POST \
   "https://api.supabase.com/v1/projects/mhmflwuztabcqchmxjnp/database/query" \
-  -H "Authorization: Bearer sbp_c0431d16f9c1df87b64ee74b479f55041e1db457" \
+  -H "Authorization: Bearer sbp_07f5ae21a2bcd08a84e12b685fb58b452f1cde03" \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT ..."}'
 ```
@@ -114,7 +114,7 @@ curl -s -x http://internet.cetin:8080 -X POST \
 | `evaluations` | table | Risk assessments; `overall_risk_level` is an enum stored **lowercase** |
 | `evaluation_modules` | table | Per-module results; status: queued → running → completed/failed |
 | `data_sources` | table | 20 active sources (news, registries, sanctions) |
-| `user_roles` | table | `admin`, `analyst`, `viewer`, `plebian` — app-level roles |
+| `user_roles` | table | `admin`, `analyst`, `viewer`, `visitor` — app-level roles |
 | `profiles` | table | User display names, `is_active` flag |
 | `dashboard_stats` | view | Aggregate stats — uses `security_invoker = off` + `overall_risk_level::text` cast |
 | `evaluation_list` | view | Joined eval+supplier view — uses `security_invoker = off` |
@@ -157,7 +157,8 @@ curl -s -x http://internet.cetin:8080 -X POST \
 20260320000001  — supplier_financial_snapshots + evaluation_financial_links
 20260327000001  — fix create_evaluation: remove ::text cast on audit_log entity_id (uuid column mismatch)
 20260327000002  — ref_countries, ref_sectors, ref_prompts reference tables + RLS + seed data
-20260327000003  — ALTER TYPE app_role ADD VALUE 'plebian' (dashboard-only role)
+20260327000003  — ALTER TYPE app_role ADD VALUE 'plebian' (dashboard-only role; renamed to 'visitor' in 20260330000001)
+20260330000001  — ALTER TYPE app_role RENAME VALUE 'plebian' TO 'visitor'
 ```
 
 ### Live DB Changes (applied directly, 2026-03-27)
@@ -170,7 +171,7 @@ Not in migration files — applied via Management API:
 - Deleted seed duplicate suppliers (CETIN a.s. + T-Mobile with `b0000000-...` IDs, 0 evals)
 - Supabase `site_url` updated to `https://agreeable-pebble-0e9fcc610.6.azurestaticapps.net`
 - Google OAuth enabled (client: `852152171579-bk23u4tl309aued3ble5cn3acralj4l3.apps.googleusercontent.com`)
-- `user_role` enum extended with `plebian` (dashboard-only access); applied via migration `20260327000003` — **must be run in Supabase SQL editor if Management API token is unavailable**
+- `user_role` enum extended with `visitor` (dashboard-only access); initially added as `plebian` in `20260327000003`, renamed to `visitor` in `20260330000001` — **run both in Supabase SQL editor if Management API token is unavailable**
 
 ## Roles Summary
 
@@ -179,9 +180,9 @@ Not in migration files — applied via Management API:
 | `admin` | Full access including Admin portal |
 | `analyst` | All pages except Admin |
 | `viewer` | All pages except Admin |
-| `plebian` | Dashboard only — all other routes redirect to `/` |
+| `visitor` | Dashboard only — all other routes redirect to `/` |
 
-`DashboardOnlyRoute` wrapper in `App.tsx` enforces plebian restriction. Sidebar hides non-Dashboard nav items for plebian users.
+`DashboardOnlyRoute` wrapper in `App.tsx` enforces visitor restriction. Sidebar hides non-Dashboard nav items for visitor users.
 
 ---
 

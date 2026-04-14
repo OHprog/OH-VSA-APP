@@ -26,6 +26,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { RoleRequestDialog } from "@/components/RoleRequestDialog";
 
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -39,8 +40,10 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const navigate = useNavigate();
-  const { user, profile, role, signOut, isAdmin, isPlebian } = useAuth();
+  const { user, profile, role, signOut, isAdmin, isVisitor } = useAuth();
   const [errorSourceCount, setErrorSourceCount] = useState(0);
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const [roleRequestOpen, setRoleRequestOpen] = useState(false);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -49,6 +52,11 @@ export function AppSidebar() {
       .select("*", { count: "exact", head: true })
       .eq("status", "error")
       .then(({ count }) => setErrorSourceCount(count ?? 0));
+    supabase
+      .from("role_requests")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "pending")
+      .then(({ count }) => setPendingRequestCount(count ?? 0));
   }, [isAdmin]);
 
   const handleLogout = async () => {
@@ -83,7 +91,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {(isPlebian ? navItems.slice(0, 1) : navItems).map((item) => (
+              {(isVisitor ? navItems.slice(0, 1) : navItems).map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink
@@ -115,6 +123,11 @@ export function AppSidebar() {
                               {errorSourceCount}
                             </Badge>
                           )}
+                          {pendingRequestCount > 0 && (
+                            <Badge className="h-4 min-w-4 px-1 text-[9px] bg-orange-500 text-white border-0">
+                              {pendingRequestCount}
+                            </Badge>
+                          )}
                         </span>
                       )}
                     </NavLink>
@@ -141,6 +154,14 @@ export function AppSidebar() {
               <span className="truncate text-[10px] text-sidebar-foreground/60 capitalize">
                 {role || "viewer"}
               </span>
+              {(role === "viewer" || role === "visitor") && (
+                <button
+                  onClick={() => setRoleRequestOpen(true)}
+                  className="mt-0.5 w-fit text-[9px] text-sidebar-foreground/40 underline hover:text-sidebar-foreground/70 transition-colors"
+                >
+                  Request upgrade
+                </button>
+              )}
             </div>
           )}
           {!collapsed && (
@@ -154,6 +175,8 @@ export function AppSidebar() {
           )}
         </div>
       </SidebarFooter>
+
+      <RoleRequestDialog open={roleRequestOpen} onOpenChange={setRoleRequestOpen} />
     </Sidebar>
   );
 }

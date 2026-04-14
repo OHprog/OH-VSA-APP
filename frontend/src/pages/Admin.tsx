@@ -37,6 +37,16 @@ interface ProfileWithRole {
   role: string;
 }
 
+interface RoleRequest {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  requested_role: string;
+  from_role: string;
+  reason: string | null;
+  created_at: string;
+}
+
 interface DataSource {
   id: string;
   name: string;
@@ -131,7 +141,7 @@ const ROLE_COLORS: Record<string, string> = {
   admin: "bg-primary/10 text-primary border-primary/20",
   analyst: "bg-accent/10 text-accent border-accent/20",
   viewer: "bg-muted text-muted-foreground border-border",
-  plebian: "bg-orange-500/10 text-orange-600 border-orange-500/20",
+  visitor: "bg-orange-500/10 text-orange-600 border-orange-500/20",
 };
 
 const SERVICE_COLORS: Record<string, string> = {
@@ -162,6 +172,12 @@ export default function Admin() {
   const [selectedUser, setSelectedUser] = useState<ProfileWithRole | null>(null);
   const [newRole, setNewRole] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
+
+  // Role requests state
+  const [roleRequests, setRoleRequests] = useState<RoleRequest[]>([]);
+  const [denyDialogOpen, setDenyDialogOpen] = useState(false);
+  const [denyTarget, setDenyTarget] = useState<RoleRequest | null>(null);
+  const [denyReason, setDenyReason] = useState("");
 
   // Data Sources tab state
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
@@ -346,6 +362,42 @@ export default function Admin() {
     }
   };
 
+  // ─── Send Role Email ─────────────────────────────────
+  const sendRoleEmail = (body: Record<string, unknown>) => {
+    // Fire-and-forget — never blocks the calling handler
+    supabase.functions
+      .invoke("send-role-email", { body })
+      .then(({ error }) => { if (error) console.warn("[send-role-email]", error.message); });
+  };
+
+  // ─── Fetch Role Requests ──────────────────────────────
+  const fetchRoleRequests = async () => {
+    const { data, error } = await supabase
+      .from("role_requests")
+      .select("id, user_id, requested_role, from_role, reason, created_at")
+      .eq("status", "pending")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.warn("[role_requests] fetch failed:", error.message);
+      return;
+    }
+
+    const userIds = (data ?? []).map((r: any) => r.user_id);
+    if (userIds.length === 0) { setRoleRequests([]); return; }
+
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", userIds);
+
+    const nameMap = new Map(profiles?.map((p: any) => [p.id, p.full_name]) ?? []);
+    setRoleRequests((data ?? []).map((r: any) => ({
+      ...r,
+      user_name: nameMap.get(r.user_id) ?? null,
+    })));
+  };
+
   // ─── Log Audit Event ─────────────────────────────────
   const logAudit = (
     action: string,
@@ -368,7 +420,7 @@ export default function Admin() {
       });
   };
 
-  useEffect(() => { fetchUsers(); fetchDataSources(); }, []);
+  useEffect(() => { fetchUsers(); fetchDataSources(); fetchRoleRequests(); }, []);
 
   // ─── Role Change ─────────────────────────────────────
   const handleRoleChange = async () => {
@@ -397,6 +449,7 @@ export default function Admin() {
         to_role: newRole,
         target_user: selectedUser.full_name,
       });
+      sendRoleEmail({ type: "role_changed", target_user_id: selectedUser.id, from_role: selectedUser.role, to_role: newRole });
       fetchUsers();
     }
     setRoleDialogOpen(false);
@@ -424,6 +477,58 @@ export default function Admin() {
       );
       fetchUsers();
     }
+  };
+
+  // ─── Approve Role Request ─────────────────────────────
+  const handleApproveRequest = async (req: RoleRequest) => {
+    const { error } = await supabase
+      .from("user_roles")
+      .update({ role: req.requested_role as "admin" | "analyst" | "viewer" | "visitor" })
+      .eq("user_id", req.user_id);
+
+    if (error) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    await supabase
+      .from("role_requests")
+      .update({ status: "approved", reviewed_by: user?.id, reviewed_at: new Date().toISOString() })
+      .eq("id", req.id);
+
+    logAudit("user.role_request_approved", "role_request", req.id, {
+      target_user: req.user_name,
+      from_role: req.from_role,
+      to_role: req.requested_role,
+    });
+    sendRoleEmail({ type: "request_approved", target_user_id: req.user_id, to_role: req.requested_role });
+
+    toast({ title: "Request approved", description: `${req.user_name}'s role upgraded to ${req.requested_role}.` });
+    fetchRoleRequests();
+    fetchUsers();
+  };
+
+  // ─── Deny Role Request ────────────────────────────────
+  const handleDenyRequest = async () => {
+    if (!denyTarget) return;
+
+    await supabase
+      .from("role_requests")
+      .update({ status: "denied", reviewed_by: user?.id, reviewed_at: new Date().toISOString() })
+      .eq("id", denyTarget.id);
+
+    logAudit("user.role_request_denied", "role_request", denyTarget.id, {
+      target_user: denyTarget.user_name,
+      requested_role: denyTarget.requested_role,
+      reason: denyReason || null,
+    });
+    sendRoleEmail({ type: "request_denied", target_user_id: denyTarget.user_id, reason: denyReason || undefined });
+
+    toast({ title: "Request denied" });
+    setDenyDialogOpen(false);
+    setDenyReason("");
+    setDenyTarget(null);
+    fetchRoleRequests();
   };
 
   // ─── Copy Invite URL ─────────────────────────────────
@@ -574,6 +679,73 @@ export default function Admin() {
               </Button>
             </CardContent>
           </Card>
+
+          {/* Pending Role Requests */}
+          {roleRequests.length > 0 && (
+            <Card className="border-orange-500/30">
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-sm font-medium">Pending Role Requests</CardTitle>
+                  <Badge className="h-5 px-1.5 text-[10px] bg-orange-500/10 text-orange-600 border border-orange-500/20">
+                    {roleRequests.length}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>User</TableHead>
+                      <TableHead>Current Role</TableHead>
+                      <TableHead>Requested Role</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Submitted</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {roleRequests.map((req) => (
+                      <TableRow key={req.id}>
+                        <TableCell className="font-medium">{req.user_name || "—"}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`capitalize border ${ROLE_COLORS[req.from_role] ?? ""}`}>
+                            {req.from_role}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`capitalize border ${ROLE_COLORS[req.requested_role] ?? ""}`}>
+                            {req.requested_role}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-48 truncate">
+                          {req.reason || "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
+                        </TableCell>
+                        <TableCell className="text-right space-x-1">
+                          <Button
+                            size="sm" variant="ghost"
+                            className="text-risk-low hover:text-risk-low"
+                            onClick={() => handleApproveRequest(req)}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm" variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => { setDenyTarget(req); setDenyDialogOpen(true); }}
+                          >
+                            Deny
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Users Table */}
           <Card>
@@ -957,12 +1129,39 @@ export default function Admin() {
               <SelectItem value="admin">Admin</SelectItem>
               <SelectItem value="analyst">Analyst</SelectItem>
               <SelectItem value="viewer">Viewer</SelectItem>
-              <SelectItem value="plebian">Plebian</SelectItem>
+              <SelectItem value="visitor">Visitor</SelectItem>
             </SelectContent>
           </Select>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRoleDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleRoleChange} disabled={newRole === selectedUser?.role}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ DENY REQUEST DIALOG ═══ */}
+      <Dialog open={denyDialogOpen} onOpenChange={(v) => { setDenyDialogOpen(v); if (!v) { setDenyReason(""); setDenyTarget(null); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deny Role Request</DialogTitle>
+            <DialogDescription>
+              Optionally provide a reason — it will be included in the email sent to {denyTarget?.user_name}.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label className="text-xs">Reason (optional)</Label>
+            <Input
+              className="mt-1.5"
+              value={denyReason}
+              onChange={(e) => setDenyReason(e.target.value)}
+              placeholder="e.g. Insufficient business need at this time"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDenyDialogOpen(false); setDenyReason(""); setDenyTarget(null); }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDenyRequest}>Deny Request</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
