@@ -163,22 +163,17 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const { data: roleRow } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', caller.id)
-    .single();
-
-  if (roleRow?.role !== 'admin') {
-    return new Response(JSON.stringify({ error: 'Forbidden — admin only' }), {
-      status: 403,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  // ── new_request: email all active admins ────────────────────────────────
+  // ── new_request: any authenticated user can trigger (they are the requester)
   if (type === 'new_request') {
     const { requester_user_id, requested_role, reason } = body;
+
+    // Caller must be the requester — prevents spoofing another user's request
+    if (caller.id !== requester_user_id) {
+      return new Response(JSON.stringify({ error: 'Forbidden — requester mismatch' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Get requester display name
     const { data: requesterProfile } = await supabase
@@ -238,7 +233,22 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // ── All other types: email the target user ──────────────────────────────
+  // ── All other types require admin ───────────────────────────────────────
+  const { data: roleRow } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', caller.id)
+    .single();
+
+  if (roleRow?.role !== 'admin') {
+    console.warn(`[send-role-email] Non-admin tried to call type=${type}, user=${caller.id}`);
+    return new Response(JSON.stringify({ error: 'Forbidden — admin only' }), {
+      status: 403,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // ── Email the target user ────────────────────────────────────────────────
   const { target_user_id, from_role, to_role, reason } = body;
 
   if (!target_user_id) {
